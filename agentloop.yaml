@@ -1,0 +1,124 @@
+# AgentLoop Configuration
+# This file should be placed at ~/.config/agentloop/agentloop.yaml
+
+server:
+  # Unix socket path
+  socket_path: ~/.local/share/agentloop/agentloop.sock
+
+pi:
+  # Path to pi binary
+  binary_path: pi
+  # LLM provider
+  provider: anthropic
+  # Model name  
+  model: claude-sonnet-4-20250514
+  # Extensions directory (optional)
+  extensions_dir: null
+  # Extra arguments to pass to pi
+  extra_args: []
+
+vault:
+  # Vault storage directory
+  path: ~/.local/share/agentloop/vault/
+
+memory:
+  # Maximum entries in user profile
+  max_profile_entries: 100
+  # Conversation retention in days
+  conversation_retention_days: 30
+  # Enable compaction
+  enable_compaction: true
+  # Compaction strategy: rolling, facts, topics
+  compaction_strategy: rolling
+  # Prompt cache TTL in seconds
+  cache_ttl_seconds: 3600
+
+sessions:
+  # Maximum concurrent sessions
+  max_concurrent: 10
+  # Maximum sessions per user
+  max_per_user: 5
+  # Session timeout in seconds
+  timeout_seconds: 3600
+  # Token budget per session
+  token_budget: 100000
+  # Tool call limit per session
+  tool_call_limit: 1000
+  # Stuck detection threshold in seconds
+  stuck_threshold_seconds: 300
+  # Enable LRU eviction when max_concurrent reached
+  evict_lru: true
+
+hitl:
+  # Tools that always require approval
+  always_pause_tools:
+    - docker
+    - bash
+  # HITL timeout in seconds
+  timeout_seconds: 300
+  # Action on timeout: approve, deny, abort
+  timeout_action: deny
+
+security:
+  # Allowed paths for file operations (empty = no restriction)
+  allowed_paths: []
+  # Blocked environment variable prefixes
+  blocked_env_prefixes:
+    - AWS_
+    - GOOGLE_
+    - GITHUB_
+  # Blocked CIDR ranges for network access
+  blocked_cidrs:
+    - 127.0.0.0/8
+    - 10.0.0.0/8
+  # Docker security settings
+  docker:
+    # Allowed docker subcommands
+    allowed_subcommands:
+      - ps
+      - logs
+      - images
+      - build
+      - compose
+      - inspect
+      - stats
+    # Blocked volume mount paths
+    blocked_volume_paths:
+      - /etc
+      - /var
+      - /root
+      - /proc
+      - /sys
+      - /dev
+  # Prompt injection protection
+  injection:
+    # Enable injection protection
+    enabled: true
+    # Whitelisted source paths
+    whitelist_sources: []
+    # Blocked keywords
+    blocked_keywords:
+      - ignore previous instructions
+      - system prompt
+      - assistant mode
+    # Patterns requiring approval
+    require_approval:
+      - eval
+      - exec
+    # Maximum content length
+    max_content_length: 50000
+    # Approval tier: owner, admin, auto_deny
+    approval_tier: owner
+    # Sanitize memory content
+    sanitize_memory: true
+
+skills:
+  # Skill directories
+  directories:
+    - ~/.local/share/agentloop/vault/skills/
+
+logging:
+  # Log level: debug, info, warn, error
+  level: info
+  # Log file path (optional)
+  file_path: ~/.local/share/agentloop/agentloop.log

@@ -1,0 +1,41 @@
+[package]
+name = "agentloop-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async runtime and networking
+tokio = { version = "1.40", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# JSON-RPC and serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Utilities
+uuid = { version = "1.10", features = ["v4", "serde"] }
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Configuration
+config = "0.14"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# For YAML frontmatter parsing (vault compatibility)
+serde_yaml = "0.9"
+
+# For time handling (session timestamps)
+chrono = { version = "0.4", features = ["serde"] }
+
+# Local crates
+agentloop-bridge = { path = "crates/agentloop-bridge", optional = true }
+
+[workspace]
+members = ["crates/*"]
+
+[features]
+default = []
+zed-acp = ["dep:agentloop-bridge", "agentloop-bridge/zed-acp"]

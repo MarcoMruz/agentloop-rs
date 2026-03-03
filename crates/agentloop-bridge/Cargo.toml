@@ -1,0 +1,30 @@
+[package]
+name = "agentloop-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone bridge for pi coding agent - can be used independently"
+
+[dependencies]
+# Async runtime and networking
+tokio = { version = "1.40", features = ["full", "net", "io-util"] }
+
+# JSON-RPC and serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Utilities
+dirs = "5.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+
+# Async utilities
+futures = "0.3"
+
+[dev-dependencies]
+tracing-subscriber = "0.3"
+
+[features]
+default = []
+zed-acp = []  # Support for Zed ACP infrastructure
