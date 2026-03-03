@@ -29,8 +29,7 @@ agentloop-rs/
 ├── crates/
 │   ├── agentloop-bridge/   # 🎯 CORE: Client library for AgentLoop server
 │   ├── agentloop-cli/      # CLI tool using the bridge
-│   ├── agentloop-core/     # Shared types and utilities
-│   └── agentloop-server/   # [Future] Optional Rust server implementation
+│   └── agentloop-core/     # Shared types and utilities
 ├── examples/               # Usage examples
 └── src/                    # Workspace root
 ```
@@ -60,10 +59,7 @@ agentloop-rs/
 - [ ] Interactive session management
 - [ ] Session history
 
-🔮 **Optional Rust Server (FUTURE)**
-- [ ] Alternative to Go server
-- [ ] API-compatible implementation
-- [ ] Performance optimizations
+**Note:** AgentLoop server implementation remains in Go and is maintained in the main AgentLoop repository.
 
 ## Quick Start
 
@@ -332,12 +328,7 @@ cargo build --features zed-acp --release
 - [ ] Plugin system for custom integrations
 - [ ] Multi-server support
 
-### 🔮 Phase 4: Optional Server (FUTURE)
-- [ ] Rust server implementation (API-compatible)
-- [ ] Performance optimizations
-- [ ] Memory usage improvements
-- [ ] Advanced concurrency patterns
-- [ ] Cloud deployment optimizations
+**Note:** Server development will continue in the main AgentLoop repository (Go implementation).
 
 ## Contributing
 
@@ -362,7 +353,7 @@ Since this is a client library, security focuses on:
 A: Memory safety, performance, and excellent async ecosystem for handling concurrent sessions and events.
 
 **Q: Can I use this without the Go server?**
-A: Currently no - the bridge requires a running AgentLoop server. A Rust server implementation is planned for Phase 4.
+A: No - the bridge requires a running AgentLoop server. This project is a client library, not a server implementation.
 
 **Q: Is the Zed integration ready?**
 A: Basic structure is ready, full integration comes in Phase 2. Currently you can use the bridge manually.

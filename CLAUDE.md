@@ -60,12 +60,8 @@ agentloop-rs/
 │   │   ├── src/main.rs            # CLI implementation
 │   │   └── Cargo.toml
 │   │
-│   ├── agentloop-core/            # Shared types and utilities
-│   │   ├── src/                   # Common types, config, errors
-│   │   └── Cargo.toml
-│   │
-│   └── agentloop-server/          # [Future] Optional Rust server
-│       ├── src/main.rs            # Rust server implementation
+│   └── agentloop-core/            # Shared types and utilities
+│       ├── src/                   # Common types, config, errors
 │       └── Cargo.toml
 │
 ├── examples/                      # Integration examples
@@ -176,9 +172,7 @@ agentloop-cli --interactive
 
 Common types, configuration parsing, error definitions shared across crates.
 
-### `agentloop-server` — Future Rust Server
 
-**Phase 4 component** - optional Rust implementation of AgentLoop server for performance optimization.
 
 ---
 
@@ -619,13 +613,7 @@ sudo systemctl start agentloop-server
 - [ ] Streaming optimizations
 - [ ] Memory usage profiling
 
-### 🔮 Phase 4: Optional Rust Server (FUTURE)
-- [ ] Complete Rust server implementation (API-compatible)
-- [ ] Performance benchmarks vs Go server
-- [ ] Memory usage optimizations
-- [ ] Advanced concurrency patterns
-- [ ] Cloud deployment optimizations
-- [ ] WebAssembly compatibility
+
 
 ---
 
@@ -643,9 +631,8 @@ This section contains specific instructions for AI agents working on this codeba
 **AgentLoop-rs is NOT a server reimplementation** - it's a **bridge client library**:
 - Primary goal: Connect Zed editor to AgentLoop Go server
 - Secondary goal: Provide Rust API for other integrations
-- Future goal: Optional Rust server implementation (Phase 4)
 
-**Key insight:** This project **complements** the Go server, doesn't replace it.
+**Key insight:** This project **complements** the Go server, doesn't replace it. **The AgentLoop server will remain in Go** and is handled in the main agentloop repository.
 
 ### **Development Flow: Understand → Plan → Code → Test**
 
