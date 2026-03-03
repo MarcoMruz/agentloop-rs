@@ -1,94 +1,196 @@
-# AgentLoop Rust Implementation
+# AgentLoop Rust Bridge
 
-🚀 **High-performance, memory-safe reimplementation of AgentLoop in Rust**
+🚀 **Rust client library and Zed ACP integration for AgentLoop**
 
 ## Overview
 
-This is a complete reimplementation of AgentLoop in Rust, designed for production use with enhanced performance, memory safety, and modularity. The Rust version maintains full compatibility with the original Go version's JSON-RPC API while providing improved resource management and standalone components.
+AgentLoop-rs provides a **bridge client library** for connecting applications to the AgentLoop server via Unix socket JSON-RPC protocol. The primary use case is **Zed editor integration** through Adaptive Code Provider (ACP) infrastructure.
+
+**This is NOT a server reimplementation** - it's a client that communicates with the existing Go AgentLoop server.
 
 ## Architecture
 
 ```
-agentloop-rs/
-├── crates/
-│   ├── agentloop-core/     # Core business logic
-│   ├── agentloop-server/   # Server binary
-│   ├── agentloop-cli/      # CLI client
-│   └── agentloop-bridge/   # Standalone pi bridge
-└── src/                    # Workspace utilities
+┌─────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Zed Editor  │────│ agentloop-bridge │────│ AgentLoop       │
+│             │    │ (Rust client)    │    │ Server (Go)     │
+│ - ACP       │    │                  │    │                 │
+│ - LSP       │    │ - JSON-RPC 2.0   │    │ - Memory mgmt   │
+│ - UI        │    │ - Unix socket    │    │ - Session mgmt  │
+└─────────────┘    │ - Event streams  │    │ - HITL approval │
+                   └──────────────────┘    │ - Agent core    │
+                                           └─────────────────┘
 ```
 
-## Features
+## Project Structure
 
-✅ **Phase 1 (Completed):**
-- [x] Core Rust infrastructure
-- [x] UNIX socket server with Tokio
-- [x] JSON-RPC 2.0 protocol handling
-- [x] Basic session management
-- [x] Bridge API design
-- [x] Configuration system
+```
+agentloop-rs/
+├── crates/
+│   ├── agentloop-bridge/   # 🎯 CORE: Client library for AgentLoop server
+│   ├── agentloop-cli/      # CLI tool using the bridge
+│   ├── agentloop-core/     # Shared types and utilities
+│   └── agentloop-server/   # [Future] Optional Rust server implementation
+├── examples/               # Usage examples
+└── src/                    # Workspace root
+```
 
-✅ **Phase 2 (Completed):**
-- [x] Bridge implementation (now AgentLoop server client)
-- [x] JSON-RPC 2.0 protocol with Unix socket
-- [x] Event handling and streaming
-- [x] Session management integration
+## Key Features
 
-📋 **Phase 3 (Planned):**
-- [ ] Memory engine
-- [ ] Vault persistence
-- [ ] Skills system
-- [ ] Security validation
+✅ **AgentLoop Bridge (COMPLETED)**
+- [x] JSON-RPC 2.0 client over Unix socket
+- [x] Full API compatibility with AgentLoop Go server
+- [x] Event streaming (text, tool_use, tool_result, hitl_request, done, error)
+- [x] Session management (start, steer, abort, wait)
+- [x] HITL approval workflow
+- [x] Async/await with Tokio
+- [x] Thread-safe design with proper error handling
 
-🔮 **Phase 4 (Future):**
-- [ ] Zed ACP integration
+✅ **Zed ACP Integration (PARTIAL)**
+- [x] Basic ZedACPAdapter structure
+- [x] Feature flag: `zed-acp`
+- [x] Coding task execution interface
+- [ ] Full Zed UI integration (Phase 2)
+- [ ] Interactive HITL approval in Zed (Phase 2)
+- [ ] File context extraction (Phase 2)
+
+📋 **CLI Tool (BASIC)**
+- [x] Task execution via command line
+- [x] Health checks
+- [ ] Interactive session management
+- [ ] Session history
+
+🔮 **Optional Rust Server (FUTURE)**
+- [ ] Alternative to Go server
+- [ ] API-compatible implementation
 - [ ] Performance optimizations
-- [ ] Advanced features
 
 ## Quick Start
 
 ### Prerequisites
 
-- Rust 1.70+ (`rustup` recommended)
-- `pi` coding agent v0.54.0+: `npm install -g @mariozechner/pi-coding-agent`
+```bash
+# Required: AgentLoop Go server
+git clone <agentloop-main-repo>
+cd agentloop && ./agentloop-server &
 
-### Build
+# Required: pi coding agent
+npm install -g @mariozechner/pi-coding-agent
+
+# Required: Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustc --version  # Should be 1.70+
+```
+
+### Build & Test
 
 ```bash
-# Clone and build
-git clone <repository>
+git clone <this-repo>
 cd agentloop-rs
+
+# Build all crates
 cargo build --release
 
-# Build specific components
-cargo build --bin agentloop-server
-cargo build --bin agentloop
+# Test bridge functionality
+cargo test -p agentloop-bridge
+
+# Test with Zed ACP features
+cargo test --features zed-acp
+
+# Build CLI tool
+cargo build --bin agentloop-cli
 ```
 
-### Run
+### Usage
 
-**Option 1: Use Go AgentLoop server (recommended for Zed integration)**
-```bash
-# Start the Go AgentLoop server (in agentloop repo)
-cd ../agentloop
-./agentloop-server &
+**1. As a Library (Primary Use Case)**
 
-# Use Rust client to communicate with Go server
-cd ../agentloop-rs
-cargo run --bin agentloop -- "describe this project structure"
+```rust
+use agentloop_bridge::{AgentLoopClient, ClientConfig, HITLDecision};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ClientConfig::default();
+    let mut client = AgentLoopClient::new(config);
+    
+    // Connect to running AgentLoop server
+    client.connect().await?;
+    
+    // Start a coding task
+    let session_id = client.start_task(
+        "marco",                    // user_id
+        "Fix the failing tests",    // task description  
+        Some("/home/marco/project"),// work_dir
+        "zed"                       // source
+    ).await?;
+    
+    // Handle events
+    let mut event_rx = client.take_event_receiver().unwrap();
+    while let Some(event) = event_rx.recv().await {
+        match event {
+            AgentEvent::Text { content, .. } => {
+                print!("{}", content);
+            }
+            AgentEvent::HITLRequest { session_id, request_id, tool_name, details, .. } => {
+                // Auto-approve safe operations
+                let decision = if tool_name == "read" { 
+                    HITLDecision::Approve 
+                } else { 
+                    HITLDecision::Deny 
+                };
+                client.respond_hitl(&session_id, &request_id, decision).await?;
+            }
+            AgentEvent::Done { output, stats, .. } => {
+                println!("✅ Task completed: {}", output);
+                println!("📊 {} tool calls, {} HITL requests", stats.tool_calls, stats.hitl_requests);
+                break;
+            }
+            AgentEvent::Error { message, .. } => {
+                eprintln!("❌ Error: {}", message);
+                break;
+            }
+            _ => {}
+        }
+    }
+    
+    Ok(())
+}
 ```
 
-**Option 2: Use Rust AgentLoop server (standalone)**
+**2. With Zed ACP (Future)**
+
+```rust
+use agentloop_bridge::{ClientConfig, zed_acp::ZedACPAdapter};
+
+#[cfg(feature = "zed-acp")]
+async fn zed_integration() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ClientConfig::default();
+    let mut adapter = ZedACPAdapter::new(config, "marco".to_string());
+    
+    let result = adapter.execute_coding_task(
+        "Refactor this function for better performance",
+        Some("/home/marco/project")
+    ).await?;
+    
+    println!("Zed ACP result: {}", result);
+    Ok(())
+}
+```
+
+**3. CLI Usage**
+
 ```bash
-# Start the Rust server
-cargo run --bin agentloop-server
-
-# In another terminal, use the CLI
-cargo run --bin agentloop -- "describe this project structure"
-
-# Or install globally
-cargo install --path crates/agentloop-server
+# Install CLI tool
 cargo install --path crates/agentloop-cli
+
+# Execute a task (requires running AgentLoop server)
+agentloop-cli "analyze the codebase and suggest improvements"
+
+# Check server health
+agentloop-cli --health
+
+# Interactive mode
+agentloop-cli --interactive
 ```
 
 ### Configuration
@@ -96,120 +198,181 @@ cargo install --path crates/agentloop-cli
 Place `agentloop.yaml` in `~/.config/agentloop/`:
 
 ```yaml
-server:
+# Bridge client config
+client:
   socket_path: ~/.local/share/agentloop/agentloop.sock
-pi:
-  binary_path: pi
-  provider: anthropic
-  model: claude-sonnet-4-20250514
-# ... see agentloop.yaml for full config
-```
+  request_timeout: 30s
+  max_retries: 3
+  retry_delay: 1s
+  event_buffer_size: 1000
 
-## Crate Documentation
-
-### agentloop-core
-
-Core library containing:
-- **Server**: UNIX socket server with JSON-RPC 2.0
-- **Session**: Session management and lifecycle
-- **Config**: Configuration loading with YAML + env vars
-- **Errors**: Structured error taxonomy
-
-### agentloop-bridge
-
-Client library for AgentLoop server communication:
-- **Communicates with AgentLoop server via Unix socket** (like agentloop-slack)
-- **Gets memory management, HITL, session management from server**
-- JSON-RPC 2.0 protocol with event streaming
-- Supports Zed ACP integration (feature: `zed-acp`)
-- Can connect to Go or Rust AgentLoop server implementations
-
-### agentloop-server
-
-Long-running server binary:
-- Manages sessions, memory, and agent execution
-- UNIX socket API identical to Go version
-- Graceful shutdown handling
-
-### agentloop-cli
-
-Command-line client:
-- Connects to server via UNIX socket
-- Interactive task execution
-- Session management commands
-- Health checking
-
-## API Compatibility
-
-The Rust implementation maintains 100% JSON-RPC API compatibility with the Go version:
-
-```json
-// Start a task
-{"jsonrpc":"2.0","method":"task.start","params":{"userId":"user","text":"fix tests","source":"cli"},"id":1}
-
-// Events (notifications)
-{"jsonrpc":"2.0","method":"event.text","params":{"sessionId":"sess-12345","content":"Hello"}}
-{"jsonrpc":"2.0","method":"event.done","params":{"sessionId":"sess-12345","output":"Done","stats":{}}}
+# Zed ACP config (when feature enabled)
+zed:
+  user_id: marco
+  workspace_detection: true
+  auto_approve_safe_tools: true
+  interactive_hitl: true
 ```
 
 ## Development
 
-### Testing
+### Running Tests
 
 ```bash
-# Run all tests
-cargo test
+# All tests
+cargo test --all
 
-# Test specific crate
-cargo test -p agentloop-core
+# Bridge tests only
+cargo test -p agentloop-bridge
 
-# Test with all features
-cargo test --all-features
+# With Zed ACP features
+cargo test --features zed-acp
+
+# Integration tests (requires running AgentLoop server)
+cargo test --test integration
 ```
 
-### Linting
+### Adding New Features
+
+1. **Bridge features**: Add to `crates/agentloop-bridge/src/lib.rs`
+2. **CLI features**: Add to `crates/agentloop-cli/src/main.rs`  
+3. **Zed features**: Add to `crates/agentloop-bridge/src/zed_acp.rs`
+4. **Tests**: Add corresponding test cases
+
+### Code Quality
 
 ```bash
-# Format code
+# Format
 cargo fmt
 
-# Run clippy
-cargo clippy
+# Linting
+cargo clippy -- -D warnings
 
-# Check documentation
+# Documentation
 cargo doc --no-deps --open
+
+# Security audit
+cargo audit
 ```
 
-### Features
+## JSON-RPC API Compatibility
 
-- `zed-acp`: Enable Zed ACP integration in agentloop-bridge
+The bridge implements 100% compatibility with AgentLoop Go server:
 
-## Migration from Go Version
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| `task.start` | `{userId, text, workDir?, source}` | Start new task |
+| `task.steer` | `{sessionId, text}` | Redirect task |
+| `task.abort` | `{sessionId}` | Abort task |
+| `hitl.respond` | `{sessionId, requestId, decision}` | HITL approval |
+| `health.check` | `{}` | Server health |
 
-The Rust version can run alongside the Go version without conflicts:
+**Events (Server → Client):**
+- `event.text` - Streaming output
+- `event.tool_use` - Tool execution start  
+- `event.tool_result` - Tool execution result
+- `event.hitl_request` - Human approval needed
+- `event.done` - Task completed
+- `event.error` - Task failed
 
-1. **Bridge as client**: agentloop-bridge connects to existing Go server
-2. **Same vault format**: Both versions use identical Markdown+YAML vault format  
-3. **API compatible**: All JSON-RPC methods are identical
-4. **Zed integration**: Use agentloop-bridge to connect Zed to Go server
-5. **Gradual migration**: Can migrate server to Rust later while keeping clients working
+## Deployment
 
-## Performance Benefits
+### Development
+```bash
+# Run AgentLoop server (Go)
+cd ../agentloop && ./agentloop-server &
 
-- **Memory safety**: No buffer overflows or memory leaks
-- **Async efficiency**: Tokio-based async runtime
-- **Zero-copy parsing**: Efficient JSON handling
-- **Resource management**: Automatic cleanup via RAII
-- **Concurrent safety**: Fearless concurrency with Send/Sync
+# Use Rust bridge/CLI
+cd agentloop-rs && cargo run --bin agentloop-cli -- "test task"
+```
+
+### Production
+```bash
+# Install bridge as library dependency
+cargo add agentloop-bridge
+
+# Or install CLI globally
+cargo install --git <repo-url> agentloop-cli
+```
+
+### Zed Editor Integration
+```bash
+# Build with Zed ACP support
+cargo build --features zed-acp --release
+
+# Integration with Zed extension system (Phase 2)
+# See: docs/zed-integration.md
+```
+
+## Roadmap
+
+### 🎯 Phase 1: Core Bridge (COMPLETED)
+- [x] JSON-RPC 2.0 client implementation
+- [x] Unix socket communication
+- [x] Event handling and streaming
+- [x] Session lifecycle management
+- [x] HITL workflow support
+- [x] Error handling and reconnection
+- [x] Basic CLI tool
+
+### 🔄 Phase 2: Zed Integration (IN PROGRESS)
+- [x] ZedACPAdapter basic structure
+- [ ] Interactive HITL approval in Zed UI
+- [ ] File context extraction from Zed
+- [ ] Symbol-aware task prompting
+- [ ] Real-time code updates via ACP
+- [ ] Error diagnostics integration
+- [ ] Zed extension packaging
+
+### 📋 Phase 3: Advanced Features (PLANNED)
+- [ ] Connection pooling and load balancing
+- [ ] Offline task queuing
+- [ ] Performance metrics and monitoring
+- [ ] Advanced configuration management
+- [ ] Plugin system for custom integrations
+- [ ] Multi-server support
+
+### 🔮 Phase 4: Optional Server (FUTURE)
+- [ ] Rust server implementation (API-compatible)
+- [ ] Performance optimizations
+- [ ] Memory usage improvements
+- [ ] Advanced concurrency patterns
+- [ ] Cloud deployment optimizations
 
 ## Contributing
 
-1. Follow Rust conventions (`cargo fmt`, `cargo clippy`)
+1. Follow Rust best practices (`cargo fmt`, `cargo clippy`)
 2. Add tests for new functionality
 3. Update documentation
-4. Maintain API compatibility
-5. Security changes require explicit approval
+4. Maintain API compatibility with AgentLoop Go server
+5. Use feature flags for optional functionality
+
+### Security
+
+Since this is a client library, security focuses on:
+- Input validation for JSON-RPC requests
+- Secure socket communication
+- Memory safety (Rust guarantees)
+- No unsafe code allowed
+- Dependency auditing
+
+## FAQ
+
+**Q: Why Rust for the bridge?**
+A: Memory safety, performance, and excellent async ecosystem for handling concurrent sessions and events.
+
+**Q: Can I use this without the Go server?**
+A: Currently no - the bridge requires a running AgentLoop server. A Rust server implementation is planned for Phase 4.
+
+**Q: Is the Zed integration ready?**
+A: Basic structure is ready, full integration comes in Phase 2. Currently you can use the bridge manually.
+
+**Q: Performance compared to Go client?**
+A: Rust bridge should be faster due to zero-copy JSON parsing and efficient async handling, but both are fast enough for interactive use.
+
+**Q: Backwards compatibility?**
+A: 100% API compatible with AgentLoop Go server. Bridge can be dropped-in replacement for any JSON-RPC client.
 
 ## License
 
-Same as the original AgentLoop project.
+Same as the main AgentLoop project.
