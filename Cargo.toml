@@ -1,41 +1,58 @@
+[workspace]
+members = ["crates/*"]
+
 [package]
 name = "agentloop-rs"
 version = "0.1.0"
 edition = "2021"
+description = "Rust bridge and Zed ACP integration for AgentLoop coding agent"
+repository = "https://github.com/MarcoMruz/agentloop-rs"
+license = "MIT OR Apache-2.0"
+keywords = ["agentloop", "zed", "acp", "coding-agent", "bridge"]
+categories = ["development-tools", "api-bindings"]
 
 [dependencies]
-# Async runtime and networking
-tokio = { version = "1.40", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec"] }
+# Re-export main bridge library for convenience
+agentloop-bridge = { path = "crates/agentloop-bridge" }
 
-# JSON-RPC and serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-# Utilities
-uuid = { version = "1.10", features = ["v4", "serde"] }
-anyhow = "1.0"
-thiserror = "1.0"
-
-# Configuration
-config = "0.14"
-
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-
-# For YAML frontmatter parsing (vault compatibility)
-serde_yaml = "0.9"
-
-# For time handling (session timestamps)
-chrono = { version = "0.4", features = ["serde"] }
-
-# Local crates
-agentloop-bridge = { path = "crates/agentloop-bridge", optional = true }
-
-[workspace]
-members = ["crates/*"]
+# Optional CLI dependency
+agentloop-cli = { path = "crates/agentloop-cli", optional = true }
 
 [features]
-default = []
-zed-acp = ["dep:agentloop-bridge", "agentloop-bridge/zed-acp"]
+default = ["bridge"]
+bridge = ["agentloop-bridge"]
+cli = ["dep:agentloop-cli"]
+zed-acp = ["agentloop-bridge/zed-acp"]
+full = ["bridge", "cli", "zed-acp"]
+
+# Development profile
+[profile.dev]
+debug = true
+opt-level = 0
+
+# Release profile - optimize for performance
+[profile.release]
+debug = false
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# Development dependencies for workspace-level examples
+[dev-dependencies]
+tokio = { version = "1.40", features = ["full"] }
+tokio-test = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
+
+[[example]]
+name = "event_handling"
+path = "examples/event_handling.rs"
+
+[[example]]
+name = "zed_integration"
+path = "examples/zed_integration.rs"
+required-features = ["zed-acp"]
