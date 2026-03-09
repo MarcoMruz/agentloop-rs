@@ -21,11 +21,14 @@ fn main() {
 #[cfg(feature = "zed-acp")]
 use agentloop_bridge::{
     zed_acp::ZedACPAdapter,
-    AgentEvent, ClientConfig, HITLDecision
+    AgentEvent, ClientConfig, HITLDecision,
 };
 
 #[cfg(feature = "zed-acp")]
-use std::path::PathBuf;
+use std::{
+    io::{self, Write},
+    path::PathBuf,
+};
 
 #[cfg(feature = "zed-acp")]
 #[derive(Debug)]
@@ -121,10 +124,10 @@ async fn simulate_zed_coding_session() -> Result<(), Box<dyn std::error::Error>>
         println!("\n🎭 Scenario: {}", scenario_name);
         println!("💭 Prompt length: {} chars", prompt.len());
         
-        // Execute coding task
-        match adapter.execute_coding_task(&prompt, Some(workspace.root_path.to_str().unwrap())).await {
-            Ok(result) => {
-                println!("✅ {}: {}", scenario_name, result);
+        // Start the coding task (returns session ID; events are handled separately).
+        match adapter.start_task_with_context(&prompt, Some(workspace.root_path.to_str().unwrap())).await {
+            Ok(session_id) => {
+                println!("✅ {}: started session {}", scenario_name, session_id);
             }
             Err(e) => {
                 eprintln!("❌ {} failed: {}", scenario_name, e);
@@ -176,8 +179,18 @@ async fn interactive_hitl_demo() -> Result<(), Box<dyn std::error::Error>> {
                 println!("   Details: {}", details);
                 println!("   Options: {:?}", options);
                 
-                // Simulate Zed's interactive approval
-                let decision = adapter.handle_hitl_approval(&session_id, &request_id, &tool_name, &details).await?;
+                // Interactive approval via stdin (mirrors what `agentloop-acp-bridge`
+                // does via `window/showMessageRequest` in the real Zed extension).
+                print!("   Approve? [y]es / [n]o / [a]bort: ");
+                let _ = io::stdout().flush();
+                let mut input = String::new();
+                let _ = io::stdin().read_line(&mut input);
+                let decision = match input.trim() {
+                    "y" | "yes" | "Y" => HITLDecision::Approve,
+                    "a" | "abort" => HITLDecision::Abort,
+                    _ => HITLDecision::Deny,
+                };
+                adapter.client_mut().respond_hitl(&session_id, &request_id, decision.clone()).await?;
                 println!("   Decision: {:?}", decision);
             }
             AgentEvent::Done { output, stats, .. } => {

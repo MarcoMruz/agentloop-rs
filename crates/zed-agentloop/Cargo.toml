@@ -1,0 +1,15 @@
+[package]
+name = "zed-agentloop"
+version = "0.1.0"
+edition = "2021"
+description = "Zed editor extension for AgentLoop ACP integration"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Only WASM-safe dependencies.  All real async work (event loop, JSON-RPC,
+# unix socket) runs in the native `agentloop-acp-bridge` binary that Zed
+# spawns as a language server process.
+zed_extension_api = "0.7.0"
+serde_json = "1.0"

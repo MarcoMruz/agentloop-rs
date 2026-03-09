@@ -1,0 +1,19 @@
+[package]
+name = "agentloop-acp-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "ACP agent bridge between Zed and AgentLoop Go server"
+
+[[bin]]
+name = "agentloop-acp-bridge"
+path = "src/main.rs"
+
+[dependencies]
+agentloop-bridge = { path = "../agentloop-bridge", features = ["zed-acp"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

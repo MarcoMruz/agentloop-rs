@@ -2,38 +2,14 @@
 name = "agentloop-core"
 version = "0.1.0"
 edition = "2021"
-description = "Core AgentLoop library with all business logic"
+description = "Shared types and configuration for AgentLoop client bridge"
 
 [dependencies]
-# Async runtime
-tokio = { version = "1.40", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec"] }
-
-# JSON-RPC and serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml = "0.9"
-
-# Utilities
-uuid = { version = "1.10", features = ["v4", "serde"] }
-anyhow = "1.0"
 thiserror = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
-
-# Configuration
 config = "0.14"
-
-# Logging
-tracing = "0.1"
-
-# Async channels and utilities
-futures = "0.3"
-
-# Home directory detection
 dirs = "5.0"
 
 [dev-dependencies]
 tempfile = "3.12"
-
-[features]
-default = []

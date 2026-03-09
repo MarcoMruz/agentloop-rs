@@ -1,5 +1,5 @@
 //! AgentLoop Bridge - Client Library for AgentLoop Server
-//! 
+//!
 //! This crate provides a client library for communicating with the AgentLoop server.
 //! It implements the JSON-RPC 2.0 protocol over Unix domain socket for accessing
 //! memory management, HITL approval, session management, and agent execution.
@@ -17,16 +17,16 @@
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let config = ClientConfig::default();
 //!     let mut client = AgentLoopClient::new(config);
-//!     
+//!
 //!     // Connect to AgentLoop server
 //!     client.connect().await?;
-//!     
+//!
 //!     // Start a task
 //!     let session_id = client.start_task("marco", "Fix the bugs in this code", None, "zed").await?;
-//!     
+//!
 //!     // Wait for completion
 //!     let result = client.wait_for_completion(&session_id).await?;
-//!     
+//!
 //!     Ok(())
 //! }
 //! ```
@@ -59,10 +59,21 @@ pub struct ClientConfig {
     pub event_buffer_size: usize,
 }
 
+/// YAML-deserialisable subset of the config file (only the fields the client cares about)
+#[derive(serde::Deserialize, Default)]
+struct FileConfig {
+    server: Option<FileServerConfig>,
+}
+
+#[derive(serde::Deserialize)]
+struct FileServerConfig {
+    socket_path: Option<PathBuf>,
+}
+
 impl Default for ClientConfig {
     fn default() -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
-        
+
         Self {
             socket_path: home.join(".local/share/agentloop/agentloop.sock"),
             request_timeout: Duration::from_secs(30),
@@ -70,6 +81,47 @@ impl Default for ClientConfig {
             retry_delay: Duration::from_millis(1000),
             event_buffer_size: 1000,
         }
+    }
+}
+
+impl ClientConfig {
+    /// Load from the default config file (`~/.config/agentloop/agentloop.yaml`),
+    /// falling back to defaults for any missing values.
+    pub fn load() -> Result<Self> {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+        Self::load_from_path(home.join(".config/agentloop/agentloop.yaml"))
+    }
+
+    /// Load from a specific config file path, falling back to defaults for any missing values.
+    pub fn load_from_path(path: impl Into<PathBuf>) -> Result<Self> {
+        let path = path.into();
+        let mut cfg = Self::default();
+
+        if !path.exists() {
+            return Ok(cfg);
+        }
+
+        let file: FileConfig = config::Config::builder()
+            .add_source(config::File::from(path))
+            .build()
+            .map_err(|e| BridgeError::Config { message: e.to_string() })?
+            .try_deserialize()
+            .map_err(|e| BridgeError::Config { message: e.to_string() })?;
+
+        if let Some(server) = file.server {
+            if let Some(socket_path) = server.socket_path {
+                // Expand leading `~/`
+                cfg.socket_path = if socket_path.starts_with("~") {
+                    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+                    let stripped = socket_path.strip_prefix("~").unwrap_or(&socket_path);
+                    home.join(stripped.strip_prefix("/").unwrap_or(stripped))
+                } else {
+                    socket_path
+                };
+            }
+        }
+
+        Ok(cfg)
     }
 }
 
@@ -255,7 +307,7 @@ impl AgentLoopClient {
     /// Create a new client instance
     pub fn new(config: ClientConfig) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
-        
+
         Self {
             config,
             state: ClientState::Disconnected,
@@ -274,6 +326,11 @@ impl AgentLoopClient {
         self.event_rx.take()
     }
 
+    /// Get the client configuration.
+    pub fn config(&self) -> &ClientConfig {
+        &self.config
+    }
+
     /// Get current connection state
     pub fn state(&self) -> ClientState {
         self.state.clone()
@@ -286,12 +343,12 @@ impl AgentLoopClient {
 
         let stream = UnixStream::connect(&self.config.socket_path).await?;
         let (reader, writer) = stream.into_split();
-        
+
         // Start read task for handling server messages
         let pending_requests = Arc::clone(&self.pending_requests);
         let event_tx = self.event_tx.clone();
         let active_sessions = Arc::clone(&self.active_sessions);
-        
+
         let read_task = tokio::spawn(async move {
             let mut reader = BufReader::new(reader);
             let mut line = String::new();
@@ -324,9 +381,9 @@ impl AgentLoopClient {
 
     /// Start a new task
     pub async fn start_task(
-        &mut self, 
+        &mut self,
         user_id: impl Into<String>,
-        text: impl Into<String>, 
+        text: impl Into<String>,
         work_dir: Option<String>,
         source: impl Into<String>
     ) -> Result<String> {
@@ -339,7 +396,7 @@ impl AgentLoopClient {
 
         let response = self.send_request("task.start", serde_json::to_value(params)?).await?;
         let start_response: TaskStartResponse = serde_json::from_value(response)?;
-        
+
         // Track session
         let mut sessions = self.active_sessions.write().await;
         sessions.insert(start_response.session_id.clone(), TaskStats {
@@ -375,9 +432,9 @@ impl AgentLoopClient {
 
     /// Respond to a HITL request
     pub async fn respond_hitl(
-        &mut self, 
-        session_id: impl Into<String>, 
-        request_id: impl Into<String>, 
+        &mut self,
+        session_id: impl Into<String>,
+        request_id: impl Into<String>,
         decision: HITLDecision
     ) -> Result<()> {
         let params = serde_json::json!({
@@ -430,7 +487,7 @@ impl AgentLoopClient {
         if let Some(task) = self._read_task.take() {
             task.abort();
         }
-        
+
         self.stream_writer = None;
         self.state = ClientState::Disconnected;
         self.emit_state_change().await;
@@ -495,7 +552,7 @@ impl AgentLoopClient {
         if let Some(id) = json.get("id").and_then(|v| v.as_u64()) {
             // Handle response
             let response: JsonRpcResponse = serde_json::from_value(json)?;
-            
+
             let mut pending = pending_requests.lock().await;
             if let Some(pending_request) = pending.remove(&id) {
                 let result = if let Some(error) = response.error {
@@ -524,19 +581,19 @@ impl AgentLoopClient {
             "event.text" => {
                 let session_id = notification.params["sessionId"].as_str().unwrap_or("").to_string();
                 let content = notification.params["content"].as_str().unwrap_or("").to_string();
-                
+
                 AgentEvent::Text { session_id, content }
             }
             "event.tool_use" => {
                 let session_id = notification.params["sessionId"].as_str().unwrap_or("").to_string();
                 let tool_name = notification.params["toolName"].as_str().unwrap_or("").to_string();
                 let input = notification.params["input"].clone();
-                
+
                 // Update stats
                 if let Some(ref mut sessions) = active_sessions.write().await.get_mut(&session_id) {
                     sessions.tool_calls += 1;
                 }
-                
+
                 AgentEvent::ToolUse { session_id, tool_name, input }
             }
             "event.tool_result" => {
@@ -544,7 +601,7 @@ impl AgentLoopClient {
                 let tool_name = notification.params["toolName"].as_str().unwrap_or("").to_string();
                 let output = notification.params["output"].as_str().unwrap_or("").to_string();
                 let success = notification.params["success"].as_bool().unwrap_or(false);
-                
+
                 AgentEvent::ToolResult { session_id, tool_name, output, success }
             }
             "event.hitl_request" => {
@@ -556,12 +613,12 @@ impl AgentLoopClient {
                     .as_array()
                     .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                     .unwrap_or_default();
-                
+
                 // Update stats
                 if let Some(ref mut sessions) = active_sessions.write().await.get_mut(&session_id) {
                     sessions.hitl_requests += 1;
                 }
-                
+
                 AgentEvent::HITLRequest { session_id, request_id, tool_name, details, options }
             }
             "event.done" => {
@@ -574,18 +631,18 @@ impl AgentLoopClient {
                         tokens_used: None,
                         hitl_requests: 0,
                     });
-                
+
                 AgentEvent::Done { session_id, output, stats }
             }
             "event.error" => {
                 let session_id = notification.params["sessionId"].as_str().unwrap_or("").to_string();
                 let message = notification.params["message"].as_str().unwrap_or("").to_string();
-                
+
                 AgentEvent::Error { session_id, message }
             }
             "event.session_saved" => {
                 let session_id = notification.params["sessionId"].as_str().unwrap_or("").to_string();
-                
+
                 AgentEvent::SessionSaved { session_id }
             }
             _ => return Ok(()), // Unknown event, ignore
@@ -641,7 +698,7 @@ pub type Result<T> = std::result::Result<T, BridgeError>;
 /// Zed ACP integration module
 pub mod zed_acp {
     //! Integration with Zed Adaptive Code Provider infrastructure
-    //! 
+    //!
     //! This module provides adapters to use the AgentLoop client within Zed's ACP system.
 
     use super::*;
@@ -671,56 +728,97 @@ pub mod zed_acp {
             &mut self.client
         }
 
-        /// Execute a coding task using context from Zed
-        pub async fn execute_coding_task(
+        /// Current user ID
+        pub fn user_id(&self) -> &str {
+            &self.current_user
+        }
+
+        /// Start a task with context-enriched prompt, returning the session ID.
+        /// The caller is responsible for consuming events via `client_mut().take_event_receiver()`.
+        pub async fn start_task_with_context(
             &mut self,
             prompt: &str,
             workspace_path: Option<&str>,
         ) -> Result<String> {
-            // Connect if not already connected
             if !self.client.is_connected() {
                 self.client.connect().await?;
             }
 
-            // Start task with context
-            let session_id = self.client.start_task(
-                &self.current_user,
-                prompt,
-                workspace_path.map(String::from),
-                "zed-acp"
-            ).await?;
+            let enhanced_prompt = self.build_context_prompt(prompt, workspace_path).await?;
 
-            // Wait for completion and return final result
-            let stats = self.client.wait_for_completion(&session_id).await?;
-            
-            Ok(format!("Task completed. Stats: {} tool calls, {} HITL requests", 
-                      stats.tool_calls, stats.hitl_requests))
+            self.client
+                .start_task(&self.current_user, &enhanced_prompt, workspace_path.map(String::from), "zed-acp")
+                .await
         }
 
-        /// Handle HITL approval interactively (placeholder for Zed integration)
-        pub async fn handle_hitl_approval(
-            &mut self,
-            session_id: &str,
-            request_id: &str,
-            tool_name: &str,
-            details: &str,
-        ) -> Result<HITLDecision> {
-            // TODO: In Phase 4, integrate with Zed's UI for approval prompts
-            // For now, default to approve for non-dangerous operations
-            let decision = match tool_name {
-                "bash" | "edit" => HITLDecision::Approve, // Most common safe operations
-                _ => HITLDecision::Deny, // Be conservative with unknown tools
-            };
+        /// Build an enriched prompt with workspace context (files, git status).
+        pub async fn build_context_prompt(&self, prompt: &str, workspace_path: Option<&str>) -> Result<String> {
+            let mut context = String::new();
 
-            self.client.respond_hitl(session_id, request_id, decision.clone()).await?;
-            Ok(decision)
+            if let Some(workspace) = workspace_path {
+                context.push_str(&format!("Workspace: {}\n", workspace));
+
+                let files = self.get_relevant_files(workspace).await?;
+                for file in &files {
+                    context.push_str(&format!("File: {}\n", file));
+                }
+            }
+
+            if let Some(current_file) = self.get_current_file().await? {
+                context.push_str(&format!("\nCurrent file: {}\n", current_file));
+            }
+
+            if let Some(git_status) = self.get_git_status(workspace_path).await? {
+                context.push_str(&format!("\nGit status:\n{}\n", git_status));
+            }
+
+            Ok(format!("{}\nUser request: {}", context, prompt))
         }
 
-        // TODO: Add more ACP-specific methods in Phase 4
-        // - File context extraction
-        // - Symbol-aware prompting  
-        // - Incremental code updates
-        // - Error diagnostics integration
+        /// Scan workspace root for relevant source files (non-recursive, top-level only).
+        async fn get_relevant_files(&self, workspace_path: &str) -> Result<Vec<String>> {
+            let mut files = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(workspace_path) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Some(ext) = path.extension() {
+                            if matches!(ext.to_str(), Some("rs" | "toml" | "go" | "ts" | "js" | "py" | "md")) {
+                                if let Some(p) = path.to_str() {
+                                    files.push(p.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(files)
+        }
+
+        /// Returns the currently focused file (populated by Zed context in Phase 2).
+        async fn get_current_file(&self) -> Result<Option<String>> {
+            Ok(None)
+        }
+
+        /// Run `git status --short` in the workspace directory.
+        async fn get_git_status(&self, workspace_path: Option<&str>) -> Result<Option<String>> {
+            let mut cmd = tokio::process::Command::new("git");
+            cmd.args(["status", "--short"]);
+            if let Some(path) = workspace_path {
+                cmd.current_dir(path);
+            }
+            match cmd.output().await {
+                Ok(output) if output.status.success() => {
+                    let status = String::from_utf8_lossy(&output.stdout).to_string();
+                    if status.trim().is_empty() {
+                        Ok(None)
+                    } else {
+                        Ok(Some(status))
+                    }
+                }
+                _ => Ok(None),
+            }
+        }
     }
 }
 
@@ -777,11 +875,11 @@ mod tests {
         let decision = HITLDecision::Approve;
         let json = serde_json::to_string(&decision).unwrap();
         assert_eq!(json, "\"approve\"");
-        
+
         let decision = HITLDecision::Deny;
         let json = serde_json::to_string(&decision).unwrap();
         assert_eq!(json, "\"deny\"");
-        
+
         let decision = HITLDecision::Abort;
         let json = serde_json::to_string(&decision).unwrap();
         assert_eq!(json, "\"abort\"");
@@ -795,10 +893,10 @@ mod tests {
             tokens_used: Some(1234),
             hitl_requests: 1,
         };
-        
+
         let json = serde_json::to_string(&stats).unwrap();
         let parsed: TaskStats = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(parsed.duration_ms, 5000);
         assert_eq!(parsed.tool_calls, 3);
         assert_eq!(parsed.tokens_used, Some(1234));

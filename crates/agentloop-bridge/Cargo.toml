@@ -15,6 +15,7 @@ serde_json = "1.0"
 # Utilities
 dirs = "5.0"
 thiserror = "1.0"
+config = "0.14"
 
 # Logging
 tracing = "0.1"

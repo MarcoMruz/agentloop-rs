@@ -191,24 +191,14 @@ agentloop-cli --interactive
 
 ### Configuration
 
-Place `agentloop.yaml` in `~/.config/agentloop/`:
+Optionally place `agentloop.yaml` in `~/.config/agentloop/`:
 
 ```yaml
-# Bridge client config
-client:
+server:
   socket_path: ~/.local/share/agentloop/agentloop.sock
-  request_timeout: 30s
-  max_retries: 3
-  retry_delay: 1s
-  event_buffer_size: 1000
-
-# Zed ACP config (when feature enabled)
-zed:
-  user_id: marco
-  workspace_detection: true
-  auto_approve_safe_tools: true
-  interactive_hitl: true
 ```
+
+The socket path defaults to `~/.local/share/agentloop/agentloop.sock` if no config file is present. All other configuration (sessions, memory, security, etc.) lives in the Go server.
 
 ## Development
 

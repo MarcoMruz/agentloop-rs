@@ -2,7 +2,7 @@
 //! 
 //! Connects to the AgentLoop server via UNIX socket and provides a command-line interface.
 
-use agentloop_core::Config;
+use agentloop_bridge::ClientConfig;
 use anyhow::{Result, Context};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
@@ -110,10 +110,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load config to get socket path
-    let config = Config::load().context("Failed to load configuration")?;
+    let config = ClientConfig::load().context("Failed to load configuration")?;
 
     // Connect to server
-    let stream = UnixStream::connect(&config.server.socket_path)
+    let stream = UnixStream::connect(&config.socket_path)
         .await
         .context("Failed to connect to AgentLoop server. Is the server running?")?;
 

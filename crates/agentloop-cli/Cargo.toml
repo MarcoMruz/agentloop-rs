@@ -9,7 +9,7 @@ name = "agentloop"
 path = "src/main.rs"
 
 [dependencies]
-agentloop-core = { path = "../agentloop-core" }
+agentloop-bridge = { path = "../agentloop-bridge" }
 
 # Async runtime
 tokio = { version = "1.40", features = ["full"] }

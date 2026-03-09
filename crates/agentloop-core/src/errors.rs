@@ -1,10 +1,4 @@
-//! Error taxonomy for AgentLoop
-//! 
-//! Based on the Go version's error categories:
-//! - Retryable: transient failures that can be retried
-//! - Fatal: stop immediately
-//! - UserAbort: user cancelled
-//! - ToolFailure: tool execution error
+//! Error taxonomy for AgentLoop client bridge
 
 use thiserror::Error;
 
@@ -16,7 +10,7 @@ pub type Result<T> = std::result::Result<T, AgentLoopError>;
 pub enum AgentLoopError {
     /// Retryable errors - transient failures that can be retried
     #[error("Retryable error: {message}")]
-    Retryable { 
+    Retryable {
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
@@ -24,7 +18,7 @@ pub enum AgentLoopError {
 
     /// Fatal errors - stop immediately, no retry
     #[error("Fatal error: {message}")]
-    Fatal { 
+    Fatal {
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
@@ -32,13 +26,11 @@ pub enum AgentLoopError {
 
     /// User abort - user cancelled operation
     #[error("User aborted: {message}")]
-    UserAbort { 
-        message: String 
-    },
+    UserAbort { message: String },
 
     /// Tool failure - tool execution error
     #[error("Tool failed: {message}")]
-    ToolFailure { 
+    ToolFailure {
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
@@ -55,10 +47,6 @@ pub enum AgentLoopError {
     /// Configuration errors
     #[error("Config error: {0}")]
     Config(#[from] config::ConfigError),
-
-    /// UUID parsing errors
-    #[error("UUID error: {0}")]
-    Uuid(#[from] uuid::Error),
 }
 
 impl AgentLoopError {

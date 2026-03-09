@@ -1,0 +1,10 @@
+/Users/marcomruz/development/agentloop-rs/crates/zed-agentloop/target/debug/deps/wit_bindgen_core-62f22ce5bdcfd62c.d: /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/lib.rs /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/abi.rs /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/ns.rs /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/source.rs
+
+/Users/marcomruz/development/agentloop-rs/crates/zed-agentloop/target/debug/deps/libwit_bindgen_core-62f22ce5bdcfd62c.rlib: /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/lib.rs /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/abi.rs /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/ns.rs /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/source.rs
+
+/Users/marcomruz/development/agentloop-rs/crates/zed-agentloop/target/debug/deps/libwit_bindgen_core-62f22ce5bdcfd62c.rmeta: /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/lib.rs /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/abi.rs /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/ns.rs /Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/source.rs
+
+/Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/lib.rs:
+/Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/abi.rs:
+/Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/ns.rs:
+/Users/marcomruz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-core-0.22.0/src/source.rs:

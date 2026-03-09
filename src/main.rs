@@ -1,30 +1,25 @@
-//! AgentLoop workspace main entry point
-//! 
-//! This is primarily for development and testing purposes.
-//! The actual binaries are in crates/agentloop-server and crates/agentloop-cli.
+//! AgentLoop-rs workspace entry point
+//!
+//! This is a thin Rust client bridge for the AgentLoop Go server.
+//! The actual binaries are in crates/agentloop-cli.
 
 use anyhow::Result;
 
 fn main() -> Result<()> {
-    println!("AgentLoop Rust Implementation");
-    println!("=============================");
+    println!("AgentLoop Rust Bridge");
+    println!("=====================");
     println!();
-    println!("Available binaries:");
-    println!("  agentloop-server  - Long-running server process");
-    println!("  agentloop         - CLI client");
+    println!("This is a client bridge for the AgentLoop Go server.");
+    println!("Start the Go server first, then use the CLI to connect.");
     println!();
     println!("To build:");
     println!("  cargo build --release");
     println!();
-    println!("To run server:");
-    println!("  cargo run --bin agentloop-server");
-    println!();
     println!("To run CLI:");
     println!("  cargo run --bin agentloop -- \"your task here\"");
     println!();
-    println!("For development, use individual crate directories:");
-    println!("  cd crates/agentloop-server && cargo run");
+    println!("For development:");
     println!("  cd crates/agentloop-cli && cargo run -- --help");
-    
+
     Ok(())
 }

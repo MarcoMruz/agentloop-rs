@@ -152,14 +152,14 @@ async fn run_multiple_tasks(client: &mut AgentLoopClient) -> Result<(), Box<dyn 
     
     let mut session_ids = Vec::new();
     
-    for (i, (description, _)) in tasks.iter().enumerate() {
+    for (i, (description, _)) in tasks.into_iter().enumerate() {
         let session_id = client.start_task(
-            "batch_user", 
-            description, 
-            Some(std::env::current_dir()?.to_string_lossy().to_string()), 
+            "batch_user",
+            description.to_string(),
+            Some(std::env::current_dir()?.to_string_lossy().to_string()),
             "batch_example"
         ).await?;
-        
+
         println!("📝 Task {}: {} ({})", i + 1, description, session_id);
         session_ids.push(session_id);
         

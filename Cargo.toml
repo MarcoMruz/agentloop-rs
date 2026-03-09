@@ -12,18 +12,12 @@ keywords = ["agentloop", "zed", "acp", "coding-agent", "bridge"]
 categories = ["development-tools", "api-bindings"]
 
 [dependencies]
-# Re-export main bridge library for convenience
 agentloop-bridge = { path = "crates/agentloop-bridge" }
-
-# Optional CLI dependency
-agentloop-cli = { path = "crates/agentloop-cli", optional = true }
+anyhow = "1.0.102"
 
 [features]
-default = ["bridge"]
-bridge = ["agentloop-bridge"]
-cli = ["dep:agentloop-cli"]
+default = []
 zed-acp = ["agentloop-bridge/zed-acp"]
-full = ["bridge", "cli", "zed-acp"]
 
 # Development profile
 [profile.dev]

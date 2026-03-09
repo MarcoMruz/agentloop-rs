@@ -1,0 +1,2 @@
+cargo:rustc-link-lib=static=wit_bindgen_cabi_realloc0_41_0
+cargo:rustc-link-search=native=/Users/marcomruz/development/agentloop-rs/crates/zed-agentloop/target/wasm32-wasip2/debug/build/wit-bindgen-rt-5fb1254a08681321/out

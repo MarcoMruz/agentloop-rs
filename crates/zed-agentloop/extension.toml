@@ -1,0 +1,27 @@
+id = "agentloop"
+name = "AgentLoop"
+description = "AI coding agent with memory and HITL approval via AgentLoop — ACP agent extension"
+version = "0.1.0"
+schema_version = 1
+authors = ["Marco Mruz"]
+
+# NOTE: The `zed_extension_api` crate (v0.7.0) does not yet expose an
+# `agent_server_command` trait method, so the agent server cannot be
+# registered automatically through the WASM extension at this time.
+#
+# Until the extension API adds agent server support, configure AgentLoop
+# as a custom ACP agent in your Zed settings.json:
+#
+#   {
+#     "agent_servers": {
+#       "AgentLoop": {
+#         "type": "custom",
+#         "command": "agentloop-acp-bridge",
+#         "args": ["--socket-path", "~/.local/share/agentloop/agentloop.sock"],
+#         "env": {}
+#       }
+#     }
+#   }
+#
+# Install the bridge binary first:
+#   cargo install --path crates/agentloop-acp-bridge
