@@ -114,10 +114,19 @@ impl AcpResponse {
 
 // ── Session state ─────────────────────────────────────────────────────────────
 
+/// A single turn in the conversation.
+#[derive(Debug, Clone)]
+struct Message {
+    role: &'static str,
+    content: String,
+}
+
 struct SessionState {
     cwd: String,
     /// AgentLoop session ID set once a task is running.
     agentloop_session_id: Option<String>,
+    /// Full conversation history for this ACP session.
+    history: Vec<Message>,
 }
 
 // ── Bridge ────────────────────────────────────────────────────────────────────
@@ -276,6 +285,7 @@ impl Bridge {
         self.sessions.lock().await.insert(acp_session_id.clone(), SessionState {
             cwd,
             agentloop_session_id: None,
+            history: Vec::new(),
         });
 
         self.respond(AcpResponse::ok(id, json!({ "sessionId": acp_session_id })));
@@ -290,6 +300,7 @@ impl Bridge {
         sessions.entry(session_id).or_insert(SessionState {
             cwd,
             agentloop_session_id: None,
+            history: Vec::new(),
         });
         drop(sessions);
 
@@ -336,11 +347,20 @@ impl Bridge {
             return;
         }
 
-        let cwd = {
-            self.sessions.lock().await
-                .get(&session_id)
-                .map(|s| s.cwd.clone())
-                .unwrap_or_else(|| "/tmp".to_string())
+        let (cwd, full_prompt) = {
+            let mut sessions = self.sessions.lock().await;
+            let state = sessions.get_mut(&session_id);
+            match state {
+                None => ("/tmp".to_string(), text.clone()),
+                Some(s) => {
+                    let cwd = s.cwd.clone();
+                    // Append the new user message to history.
+                    s.history.push(Message { role: "user", content: text.clone() });
+                    // Build a full conversation prompt from history.
+                    let full = build_conversation_prompt(&s.history);
+                    (cwd, full)
+                }
+            }
         };
 
         let user_id = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
@@ -355,7 +375,7 @@ impl Bridge {
             return;
         }
 
-        let al_session_id = match client.start_task(&user_id, &text, Some(cwd), "zed-acp").await {
+        let al_session_id = match client.start_task(&user_id, &full_prompt, Some(cwd), "zed-acp").await {
             Ok(s) => s,
             Err(e) => {
                 self.respond(AcpResponse::err(id, -32000, format!("start_task failed: {e}")));
@@ -379,6 +399,8 @@ impl Bridge {
         // tool_name → FIFO queue of pending toolCallIds.
         let mut pending_tool_calls: HashMap<String, VecDeque<String>> = HashMap::new();
         let mut tool_call_counter: u64 = 0;
+        // Accumulate the full assistant response for history storage.
+        let mut assistant_response = String::new();
 
         let Some(mut rx) = event_rx else {
             self.respond(AcpResponse::ok(id, json!({ "stopReason": "end_turn" })));
@@ -388,6 +410,7 @@ impl Bridge {
         while let Some(event) = rx.recv().await {
             match event {
                 AgentEvent::Text { content, .. } => {
+                    assistant_response.push_str(&content);
                     self.notify("session/update", json!({
                         "sessionId": session_id,
                         "update": {
@@ -469,6 +492,16 @@ impl Bridge {
 
                 AgentEvent::Error { message, .. } => {
                     tracing::warn!("Task error: {message}");
+                    // Remove the last user message from history on error so it
+                    // doesn't pollute future turns with a failed exchange.
+                    {
+                        let mut sessions = self.sessions.lock().await;
+                        if let Some(state) = sessions.get_mut(&session_id) {
+                            if state.history.last().map(|m| m.role) == Some("user") {
+                                state.history.pop();
+                            }
+                        }
+                    }
                     self.respond(AcpResponse::err(id, -32000, message));
                     return;
                 }
@@ -477,11 +510,50 @@ impl Bridge {
             }
         }
 
+        // Store the assistant response in history for future turns.
+        if !assistant_response.is_empty() {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(state) = sessions.get_mut(&session_id) {
+                state.history.push(Message { role: "assistant", content: assistant_response });
+            }
+        }
+
         self.respond(AcpResponse::ok(id, json!({ "stopReason": "end_turn" })));
     }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Build a single prompt string from the conversation history.
+///
+/// The format is readable plain text that the AgentLoop agent can parse:
+///
+/// ```text
+/// <conversation_history>
+/// [user]: ...
+/// [assistant]: ...
+/// [user]: ...  ← current turn (already appended before this call)
+/// </conversation_history>
+///
+/// Please continue the conversation above. Respond to the last [user] message.
+/// ```
+///
+/// When there's only one message (first turn), we return the bare text so the
+/// agent receives a clean prompt with no history boilerplate.
+fn build_conversation_prompt(history: &[Message]) -> String {
+    if history.len() <= 1 {
+        // First turn — no prior context, just the user message.
+        return history.last().map(|m| m.content.clone()).unwrap_or_default();
+    }
+
+    let mut buf = String::from("<conversation_history>\n");
+    for msg in history {
+        buf.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
+    }
+    buf.push_str("</conversation_history>\n\n");
+    buf.push_str("Please continue the conversation above. Respond to the last [user] message.");
+    buf
+}
 
 /// Extract plain text from an ACP prompt array (takes the first text block).
 fn extract_prompt_text(prompt: &Value) -> String {
@@ -674,5 +746,98 @@ async fn main() {
                 }
             }
         }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_conversation_prompt_single_turn() {
+        let history = vec![Message { role: "user", content: "hello".to_string() }];
+        let prompt = build_conversation_prompt(&history);
+        // First turn: bare text, no boilerplate.
+        assert_eq!(prompt, "hello");
+        assert!(!prompt.contains("<conversation_history>"));
+    }
+
+    #[test]
+    fn test_build_conversation_prompt_empty() {
+        let history: Vec<Message> = vec![];
+        let prompt = build_conversation_prompt(&history);
+        assert_eq!(prompt, "");
+    }
+
+    #[test]
+    fn test_build_conversation_prompt_multi_turn() {
+        let history = vec![
+            Message { role: "user", content: "What is 2+2?".to_string() },
+            Message { role: "assistant", content: "4".to_string() },
+            Message { role: "user", content: "And 3+3?".to_string() },
+        ];
+        let prompt = build_conversation_prompt(&history);
+        assert!(prompt.contains("<conversation_history>"));
+        assert!(prompt.contains("[user]: What is 2+2?"));
+        assert!(prompt.contains("[assistant]: 4"));
+        assert!(prompt.contains("[user]: And 3+3?"));
+        assert!(prompt.contains("</conversation_history>"));
+        assert!(prompt.contains("Respond to the last [user] message"));
+    }
+
+    #[test]
+    fn test_build_conversation_prompt_two_turns() {
+        // user + assistant = 2 messages → still shows history boilerplate
+        let history = vec![
+            Message { role: "user", content: "hi".to_string() },
+            Message { role: "assistant", content: "hello".to_string() },
+        ];
+        let prompt = build_conversation_prompt(&history);
+        assert!(prompt.contains("<conversation_history>"));
+        assert!(prompt.contains("[user]: hi"));
+        assert!(prompt.contains("[assistant]: hello"));
+    }
+
+    #[test]
+    fn test_session_state_history_accumulation() {
+        // Simulate the history accumulation that happens in handle_session_prompt.
+        let mut history: Vec<Message> = Vec::new();
+
+        // First turn
+        history.push(Message { role: "user", content: "first question".to_string() });
+        let prompt1 = build_conversation_prompt(&history);
+        assert_eq!(prompt1, "first question");
+
+        // First turn response stored
+        history.push(Message { role: "assistant", content: "first answer".to_string() });
+
+        // Second turn
+        history.push(Message { role: "user", content: "second question".to_string() });
+        let prompt2 = build_conversation_prompt(&history);
+        assert!(prompt2.contains("[user]: first question"));
+        assert!(prompt2.contains("[assistant]: first answer"));
+        assert!(prompt2.contains("[user]: second question"));
+    }
+
+    #[test]
+    fn test_extract_prompt_text_array() {
+        let prompt = serde_json::json!([
+            { "type": "text", "text": "hello world" }
+        ]);
+        assert_eq!(extract_prompt_text(&prompt), "hello world");
+    }
+
+    #[test]
+    fn test_extract_prompt_text_string_fallback() {
+        let prompt = serde_json::json!("plain text");
+        assert_eq!(extract_prompt_text(&prompt), "plain text");
+    }
+
+    #[test]
+    fn test_extract_prompt_text_empty_array() {
+        let prompt = serde_json::json!([]);
+        assert_eq!(extract_prompt_text(&prompt), "");
     }
 }
