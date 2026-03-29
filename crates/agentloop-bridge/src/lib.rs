@@ -182,6 +182,38 @@ pub enum AgentEvent {
         details: String,
         /// Available options
         options: Vec<String>,
+        /// Raw command / file path / URL (optional)
+        command: Option<String>,
+        /// Working directory at time of request (optional)
+        work_dir: Option<String>,
+        /// Security rule name that fired (optional)
+        rule: Option<String>,
+        /// Sub-method within the rule (optional)
+        method: Option<String>,
+        /// Tool category hint from server (optional)
+        tool_category: Option<String>,
+        /// Specific file/dir path for file tools (optional)
+        file_path: Option<String>,
+        /// Risk level: "low" | "medium" | "high" (optional)
+        risk_level: Option<String>,
+        /// One-line human explanation of why approval is needed (optional)
+        reason: Option<String>,
+    },
+    /// HITL request was automatically approved by the server
+    /// (risk level is "low" or "medium" and AutoApproveNonHigh is enabled)
+    HITLAutoApproved {
+        /// Session ID
+        session_id: String,
+        /// Request ID for correlation
+        request_id: String,
+        /// Tool name that was auto-approved
+        tool_name: String,
+        /// Risk level ("low" or "medium")
+        risk_level: String,
+        /// Raw command / file path that was approved
+        command: String,
+        /// Security rule name
+        rule: String,
     },
     /// Agent completed task
     Done {
@@ -614,12 +646,36 @@ impl AgentLoopClient {
                     .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                     .unwrap_or_default();
 
+                // Enriched optional fields
+                let command = notification.params["command"].as_str().map(String::from);
+                let work_dir = notification.params["workDir"].as_str().map(String::from);
+                let rule = notification.params["rule"].as_str().map(String::from);
+                let method = notification.params["method"].as_str().map(String::from);
+                let tool_category = notification.params["toolCategory"].as_str().map(String::from);
+                let file_path = notification.params["filePath"].as_str().map(String::from);
+                let risk_level = notification.params["riskLevel"].as_str().map(String::from);
+                let reason = notification.params["reason"].as_str().map(String::from);
+
                 // Update stats
                 if let Some(ref mut sessions) = active_sessions.write().await.get_mut(&session_id) {
                     sessions.hitl_requests += 1;
                 }
 
-                AgentEvent::HITLRequest { session_id, request_id, tool_name, details, options }
+                AgentEvent::HITLRequest {
+                    session_id, request_id, tool_name, details, options,
+                    command, work_dir, rule, method, tool_category, file_path,
+                    risk_level, reason,
+                }
+            }
+            "event.hitl_auto_approved" => {
+                let session_id = notification.params["sessionId"].as_str().unwrap_or("").to_string();
+                let request_id = notification.params["requestId"].as_str().unwrap_or("").to_string();
+                let tool_name = notification.params["toolName"].as_str().unwrap_or("").to_string();
+                let risk_level = notification.params["riskLevel"].as_str().unwrap_or("").to_string();
+                let command = notification.params["command"].as_str().unwrap_or("").to_string();
+                let rule = notification.params["rule"].as_str().unwrap_or("").to_string();
+
+                AgentEvent::HITLAutoApproved { session_id, request_id, tool_name, risk_level, command, rule }
             }
             "event.done" => {
                 let session_id = notification.params["sessionId"].as_str().unwrap_or("").to_string();

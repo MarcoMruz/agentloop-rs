@@ -385,7 +385,24 @@ impl Bridge {
                     }));
                 }
 
-                AgentEvent::HITLRequest { session_id: al_sid, request_id, tool_name, details, options } => {
+                AgentEvent::HITLAutoApproved { tool_name, risk_level, command, .. } => {
+                    tracing::info!("HITL auto-approved [risk: {risk_level}] '{tool_name}': {command}");
+                    // Inform Zed via a tool_call update so it's visible in the UI.
+                    tool_call_counter += 1;
+                    let tc_id = format!("tc-auto-{tool_call_counter}");
+                    self.notify("session/update", json!({
+                        "sessionId": session_id,
+                        "update": {
+                            "sessionUpdate": "tool_call",
+                            "toolCallId": tc_id,
+                            "title": format!("Auto-approved [{risk_level}]: {tool_name}"),
+                            "kind": tool_name_to_kind(&tool_name),
+                            "status": "completed"
+                        }
+                    }));
+                }
+
+                AgentEvent::HITLRequest { session_id: al_sid, request_id, tool_name, details, options, .. } => {
                     tool_call_counter += 1;
                     let tc_id = format!("tc-hitl-{tool_call_counter}");
 

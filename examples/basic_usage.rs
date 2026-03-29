@@ -89,15 +89,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("   ... (output truncated)");
                 }
             }
+            AgentEvent::HITLAutoApproved { tool_name, risk_level, command, .. } => {
+                println!("\n✅ Auto-approved [risk: {}] {}: {}", risk_level, tool_name, command);
+            }
             AgentEvent::HITLRequest { 
                 session_id, 
                 request_id, 
                 tool_name, 
                 details, 
-                options 
+                options,
+                risk_level,
+                ..
             } => {
                 hitl_requests += 1;
-                println!("\n🤔 HITL Request #{}: {} needs approval", hitl_requests, tool_name);
+                let risk = risk_level.as_deref().unwrap_or("unknown");
+                println!("\n🤔 HITL Request #{} [risk: {}]: {} needs approval", hitl_requests, risk, tool_name);
                 println!("   Details: {}", details);
                 println!("   Options: {:?}", options);
                 
