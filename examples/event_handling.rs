@@ -235,9 +235,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let preview = output.lines().next().unwrap_or("").to_string();
                         println!("{} [{}] {} result: {}", status, &session_id[..8], tool_name, preview);
                     }
-                    AgentEvent::HITLRequest { session_id, request_id, tool_name, details, .. } => {
+                    AgentEvent::HITLAutoApproved { session_id, tool_name, risk_level, command, .. } => {
+                        println!("✅ [{}] Auto-approved [risk: {}] {}: {}", &session_id[..8], risk_level, tool_name, command);
+                    }
+                    AgentEvent::HITLRequest { session_id, request_id, tool_name, details, risk_level, .. } => {
                         task_manager.record_hitl(&session_id);
-                        println!("🤔 [{}] HITL: {} - {}", &session_id[..8], tool_name, details);
+                        let risk = risk_level.as_deref().unwrap_or("unknown");
+                        println!("🤔 [{}] HITL [risk: {}]: {} - {}", &session_id[..8], risk, tool_name, details);
                         
                         // Smart approval logic
                         let decision = if tool_name == "bash" {
