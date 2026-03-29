@@ -17,3 +17,4 @@ clap = { version = "4", features = ["derive"] }
 dirs = "5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
