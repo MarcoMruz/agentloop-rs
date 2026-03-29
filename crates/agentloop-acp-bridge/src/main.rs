@@ -420,7 +420,7 @@ impl Bridge {
                     }));
                 }
 
-                AgentEvent::ToolUse { tool_name, input, .. } => {
+                AgentEvent::ToolUse { tool_name, input: _, .. } => {
                     tool_call_counter += 1;
                     let tc_id = format!("tc-{tool_call_counter}");
                     pending_tool_calls.entry(tool_name.clone()).or_default().push_back(tc_id.clone());
