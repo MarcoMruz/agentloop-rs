@@ -182,6 +182,38 @@ pub enum AgentEvent {
         details: String,
         /// Available options
         options: Vec<String>,
+        /// Raw command / file path / URL (optional)
+        command: Option<String>,
+        /// Working directory at time of request (optional)
+        work_dir: Option<String>,
+        /// Security rule name that fired (optional)
+        rule: Option<String>,
+        /// Sub-method within the rule (optional)
+        method: Option<String>,
+        /// Tool category hint from server (optional)
+        tool_category: Option<String>,
+        /// Specific file/dir path for file tools (optional)
+        file_path: Option<String>,
+        /// Risk level: "low" | "medium" | "high" (optional)
+        risk_level: Option<String>,
+        /// One-line human explanation of why approval is needed (optional)
+        reason: Option<String>,
+    },
+    /// HITL request was automatically approved by the server
+    /// (risk level is "low" or "medium" and AutoApproveNonHigh is enabled)
+    HITLAutoApproved {
+        /// Session ID
+        session_id: String,
+        /// Request ID for correlation
+        request_id: String,
+        /// Tool name that was auto-approved
+        tool_name: String,
+        /// Risk level ("low" or "medium")
+        risk_level: String,
+        /// Raw command / file path that was approved
+        command: String,
+        /// Security rule name
+        rule: String,
     },
     /// Agent completed task
     Done {
@@ -614,12 +646,36 @@ impl AgentLoopClient {
                     .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                     .unwrap_or_default();
 
+                // Enriched optional fields
+                let command = notification.params["command"].as_str().map(String::from);
+                let work_dir = notification.params["workDir"].as_str().map(String::from);
+                let rule = notification.params["rule"].as_str().map(String::from);
+                let method = notification.params["method"].as_str().map(String::from);
+                let tool_category = notification.params["toolCategory"].as_str().map(String::from);
+                let file_path = notification.params["filePath"].as_str().map(String::from);
+                let risk_level = notification.params["riskLevel"].as_str().map(String::from);
+                let reason = notification.params["reason"].as_str().map(String::from);
+
                 // Update stats
                 if let Some(ref mut sessions) = active_sessions.write().await.get_mut(&session_id) {
                     sessions.hitl_requests += 1;
                 }
 
-                AgentEvent::HITLRequest { session_id, request_id, tool_name, details, options }
+                AgentEvent::HITLRequest {
+                    session_id, request_id, tool_name, details, options,
+                    command, work_dir, rule, method, tool_category, file_path,
+                    risk_level, reason,
+                }
+            }
+            "event.hitl_auto_approved" => {
+                let session_id = notification.params["sessionId"].as_str().unwrap_or("").to_string();
+                let request_id = notification.params["requestId"].as_str().unwrap_or("").to_string();
+                let tool_name = notification.params["toolName"].as_str().unwrap_or("").to_string();
+                let risk_level = notification.params["riskLevel"].as_str().unwrap_or("").to_string();
+                let command = notification.params["command"].as_str().unwrap_or("").to_string();
+                let rule = notification.params["rule"].as_str().unwrap_or("").to_string();
+
+                AgentEvent::HITLAutoApproved { session_id, request_id, tool_name, risk_level, command, rule }
             }
             "event.done" => {
                 let session_id = notification.params["sessionId"].as_str().unwrap_or("").to_string();
@@ -702,6 +758,143 @@ pub mod zed_acp {
     //! This module provides adapters to use the AgentLoop client within Zed's ACP system.
 
     use super::*;
+    use std::path::{Path, PathBuf};
+
+    /// A single file's content, for injecting into task prompts as context.
+    #[derive(Debug, Clone)]
+    pub struct FileContext {
+        /// Path to the file (used for display and language detection).
+        pub path: String,
+        /// Full text content of the file.
+        pub content: String,
+    }
+
+    impl FileContext {
+        /// Read a single file from disk.
+        pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
+            let path = path.as_ref();
+            let content = std::fs::read_to_string(path)
+                .map_err(BridgeError::Io)?;
+            Ok(Self {
+                path: path.to_string_lossy().into_owned(),
+                content,
+            })
+        }
+
+        /// Collect files from a directory according to `options`.
+        pub fn from_folder(path: impl AsRef<Path>, options: &FolderContextOptions) -> Result<Vec<Self>> {
+            let mut results = Vec::new();
+            collect_files(path.as_ref(), options, &mut results, 0)?;
+            results.sort_by(|a, b| a.path.cmp(&b.path));
+            Ok(results)
+        }
+
+        fn language_hint(&self) -> &str {
+            Path::new(&self.path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+        }
+
+        /// Format as a fenced markdown code block.
+        pub fn as_markdown_block(&self) -> String {
+            format!(
+                "### `{}`\n```{}\n{}\n```\n",
+                self.path,
+                self.language_hint(),
+                self.content.trim_end()
+            )
+        }
+    }
+
+    fn collect_files(
+        dir: &Path,
+        options: &FolderContextOptions,
+        results: &mut Vec<FileContext>,
+        depth: usize,
+    ) -> Result<()> {
+        if results.len() >= options.max_files {
+            return Ok(());
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return Ok(()),
+        };
+        let default_exts = ["rs", "toml", "go", "ts", "tsx", "js", "jsx", "py", "md", "yaml", "yml", "json"];
+        let mut subdirs: Vec<PathBuf> = Vec::new();
+
+        for entry in entries.flatten() {
+            if results.len() >= options.max_files {
+                break;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if options.recursive && depth < options.max_depth && !options.ignore_dirs.iter().any(|d| d == name) {
+                    subdirs.push(path);
+                }
+            } else if path.is_file() {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let allowed = match &options.extensions {
+                    Some(exts) => exts.iter().any(|e| e == ext),
+                    None => default_exts.contains(&ext),
+                };
+                if !allowed {
+                    continue;
+                }
+                let size = path.metadata().map(|m| m.len()).unwrap_or(u64::MAX);
+                if size > options.max_file_size_bytes as u64 {
+                    continue;
+                }
+                if let Ok(ctx) = FileContext::from_file(&path) {
+                    results.push(ctx);
+                }
+            }
+        }
+        for subdir in subdirs {
+            if results.len() >= options.max_files {
+                break;
+            }
+            collect_files(&subdir, options, results, depth + 1)?;
+        }
+        Ok(())
+    }
+
+    /// Options controlling which files are collected from a folder.
+    pub struct FolderContextOptions {
+        /// Extensions to include (e.g. `["rs", "toml"]`). `None` uses a built-in default set.
+        pub extensions: Option<Vec<String>>,
+        /// Maximum number of files to collect. Default: 20.
+        pub max_files: usize,
+        /// Maximum file size in bytes; larger files are skipped. Default: 100 KiB.
+        pub max_file_size_bytes: usize,
+        /// Recurse into subdirectories. Default: true.
+        pub recursive: bool,
+        /// Maximum recursion depth. Default: 5.
+        pub max_depth: usize,
+        /// Directory names to skip entirely. Default: `["target", ".git", "node_modules", ".cargo", "dist", "build"]`.
+        pub ignore_dirs: Vec<String>,
+    }
+
+    impl Default for FolderContextOptions {
+        fn default() -> Self {
+            Self {
+                extensions: None,
+                max_files: 20,
+                max_file_size_bytes: 100 * 1024,
+                recursive: true,
+                max_depth: 5,
+                ignore_dirs: vec![
+                    "target".into(),
+                    ".git".into(),
+                    "node_modules".into(),
+                    ".cargo".into(),
+                    "dist".into(),
+                    "build".into(),
+                ],
+            }
+        }
+    }
 
     /// Zed ACP adapter for AgentLoop client
     pub struct ZedACPAdapter {
@@ -749,6 +942,72 @@ pub mod zed_acp {
             self.client
                 .start_task(&self.current_user, &enhanced_prompt, workspace_path.map(String::from), "zed-acp")
                 .await
+        }
+
+        /// Start a task with explicit file contexts embedded in the prompt.
+        ///
+        /// Each `FileContext` in `files` has its full content included as a fenced code block.
+        /// Use [`FileContext::from_file`] for individual files or [`FileContext::from_folder`] for
+        /// entire directories.
+        ///
+        /// # Example
+        /// ```no_run
+        /// # use agentloop_bridge::zed_acp::{ZedACPAdapter, FileContext, FolderContextOptions};
+        /// # use agentloop_bridge::ClientConfig;
+        /// # async fn example() -> agentloop_bridge::Result<()> {
+        /// let config = ClientConfig::default();
+        /// let mut adapter = ZedACPAdapter::new(config, "marco".to_string());
+        ///
+        /// // Single file
+        /// let file = FileContext::from_file("src/main.rs")?;
+        ///
+        /// // Entire folder (Rust files only, max 10 files)
+        /// let folder_opts = FolderContextOptions {
+        ///     extensions: Some(vec!["rs".into()]),
+        ///     max_files: 10,
+        ///     ..Default::default()
+        /// };
+        /// let folder_files = FileContext::from_folder("src/", &folder_opts)?;
+        ///
+        /// let mut all_files = vec![file];
+        /// all_files.extend(folder_files);
+        ///
+        /// let session_id = adapter
+        ///     .start_task_with_files("Fix all compiler warnings", Some("/my/project"), &all_files)
+        ///     .await?;
+        /// # Ok(())
+        /// # }
+        /// ```
+        pub async fn start_task_with_files(
+            &mut self,
+            prompt: &str,
+            work_dir: Option<&str>,
+            files: &[FileContext],
+        ) -> Result<String> {
+            if !self.client.is_connected() {
+                self.client.connect().await?;
+            }
+            let enhanced_prompt = Self::format_task_with_files(prompt, files);
+            self.client
+                .start_task(&self.current_user, &enhanced_prompt, work_dir.map(String::from), "zed-acp")
+                .await
+        }
+
+        /// Compose a prompt that embeds file contents as fenced code blocks.
+        ///
+        /// Returns the raw string — useful when you want to inspect or log the prompt before
+        /// sending it, or when building prompts outside of an async context.
+        pub fn format_task_with_files(prompt: &str, files: &[FileContext]) -> String {
+            if files.is_empty() {
+                return prompt.to_string();
+            }
+            let mut out = String::from("## Context Files\n\n");
+            for file in files {
+                out.push_str(&file.as_markdown_block());
+                out.push('\n');
+            }
+            out.push_str(&format!("## Task\n\n{}", prompt));
+            out
         }
 
         /// Build an enriched prompt with workspace context (files, git status).
@@ -909,5 +1168,67 @@ mod tests {
         let config = ClientConfig::default();
         let adapter = crate::zed_acp::ZedACPAdapter::new(config, "test_user".to_string());
         assert_eq!(adapter.client().state(), ClientState::Disconnected);
+    }
+
+    #[cfg(feature = "zed-acp")]
+    #[test]
+    fn test_file_context_as_markdown_block() {
+        use crate::zed_acp::FileContext;
+        let ctx = FileContext {
+            path: "src/main.rs".to_string(),
+            content: "fn main() {}".to_string(),
+        };
+        let block = ctx.as_markdown_block();
+        assert!(block.contains("### `src/main.rs`"));
+        assert!(block.contains("```rs"));
+        assert!(block.contains("fn main() {}"));
+    }
+
+    #[cfg(feature = "zed-acp")]
+    #[test]
+    fn test_format_task_with_files_empty() {
+        use crate::zed_acp::ZedACPAdapter;
+        let result = ZedACPAdapter::format_task_with_files("fix bug", &[]);
+        assert_eq!(result, "fix bug");
+    }
+
+    #[cfg(feature = "zed-acp")]
+    #[test]
+    fn test_format_task_with_files_with_content() {
+        use crate::zed_acp::{FileContext, ZedACPAdapter};
+        let files = vec![FileContext {
+            path: "src/lib.rs".to_string(),
+            content: "pub fn add(a: i32, b: i32) -> i32 { a + b }".to_string(),
+        }];
+        let result = ZedACPAdapter::format_task_with_files("add tests", &files);
+        assert!(result.contains("## Context Files"));
+        assert!(result.contains("src/lib.rs"));
+        assert!(result.contains("## Task"));
+        assert!(result.contains("add tests"));
+    }
+
+    #[cfg(feature = "zed-acp")]
+    #[test]
+    fn test_folder_context_options_default() {
+        use crate::zed_acp::FolderContextOptions;
+        let opts = FolderContextOptions::default();
+        assert_eq!(opts.max_files, 20);
+        assert_eq!(opts.max_file_size_bytes, 100 * 1024);
+        assert!(opts.recursive);
+        assert_eq!(opts.max_depth, 5);
+        assert!(opts.ignore_dirs.contains(&"target".to_string()));
+        assert!(opts.ignore_dirs.contains(&".git".to_string()));
+    }
+
+    #[cfg(feature = "zed-acp")]
+    #[test]
+    fn test_file_context_from_file() {
+        use crate::zed_acp::FileContext;
+        // Read this very test file as a sanity check
+        let path = file!(); // e.g. "crates/agentloop-bridge/src/lib.rs"
+        if let Ok(ctx) = FileContext::from_file(path) {
+            assert!(!ctx.content.is_empty());
+            assert!(ctx.path.contains("lib.rs"));
+        }
     }
 }
