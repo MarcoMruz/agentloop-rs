@@ -42,10 +42,6 @@ struct Args {
     #[arg(long)]
     socket_path: Option<PathBuf>,
 
-    /// Map local paths to remote paths (format: LOCAL_PREFIX:REMOTE_PREFIX).
-    /// Example: --path-map /Users/marco:/home/marco
-    #[arg(long)]
-    path_map: Option<String>,
 }
 
 // ── ACP protocol types ────────────────────────────────────────────────────────
@@ -133,31 +129,6 @@ struct SessionState {
 
 type PendingMap = Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>;
 
-/// Local→remote path mapping for remote AgentLoop servers.
-#[derive(Clone)]
-struct PathMap {
-    local_prefix: String,
-    remote_prefix: String,
-}
-
-impl PathMap {
-    fn parse(s: &str) -> Option<Self> {
-        let (local, remote) = s.split_once(':')?;
-        Some(Self {
-            local_prefix: local.to_string(),
-            remote_prefix: remote.to_string(),
-        })
-    }
-
-    fn map_path(&self, path: &str) -> String {
-        if path.starts_with(&self.local_prefix) {
-            format!("{}{}", self.remote_prefix, &path[self.local_prefix.len()..])
-        } else {
-            path.to_string()
-        }
-    }
-}
-
 struct Bridge {
     /// Channel for sending serialised JSON-RPC messages to stdout.
     output_tx: mpsc::UnboundedSender<String>,
@@ -171,12 +142,10 @@ struct Bridge {
     next_req_id: Arc<AtomicU64>,
     /// Monotonically-increasing session counter.
     next_session_num: Arc<AtomicU64>,
-    /// Optional local→remote path mapping.
-    path_map: Option<PathMap>,
 }
 
 impl Bridge {
-    fn new(output_tx: mpsc::UnboundedSender<String>, config: ClientConfig, path_map: Option<PathMap>) -> Self {
+    fn new(output_tx: mpsc::UnboundedSender<String>, config: ClientConfig) -> Self {
         Self {
             output_tx,
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
@@ -184,15 +153,6 @@ impl Bridge {
             agent: Arc::new(Mutex::new(AgentLoopClient::new(config))),
             next_req_id: Arc::new(AtomicU64::new(1_000)),
             next_session_num: Arc::new(AtomicU64::new(1)),
-            path_map,
-        }
-    }
-
-    /// Map a local path to a remote path (if path_map is configured).
-    fn map_path(&self, path: &str) -> String {
-        match &self.path_map {
-            Some(pm) => pm.map_path(path),
-            None => path.to_string(),
         }
     }
 
@@ -263,27 +223,18 @@ impl Bridge {
                 "name": "agentloop",
                 "title": "AgentLoop",
                 "version": env!("CARGO_PKG_VERSION")
-            },
-            "authMethods": [
-                {
-                    "id": "agentloop-oauth",
-                    "type": "agent",
-                    "name": "AgentLoop",
-                    "description": "Authentication is handled by the AgentLoop server"
-                }
-            ]
+            }
         })));
     }
 
     /// `session/new` — Create a new ACP session.
     async fn handle_session_new(&self, id: Value, params: Value) {
-        let raw_cwd = params["cwd"].as_str().unwrap_or("/tmp");
-        let cwd = self.map_path(raw_cwd);
+        let cwd = params["cwd"].as_str().unwrap_or("/tmp").to_string();
         let session_num = self.next_session_num.fetch_add(1, Ordering::SeqCst);
         let acp_session_id = format!("acp-sess-{session_num}");
 
         self.sessions.lock().await.insert(acp_session_id.clone(), SessionState {
-            cwd,
+            cwd: cwd.to_string(),
             agentloop_session_id: None,
             history: Vec::new(),
         });
@@ -396,7 +347,7 @@ impl Bridge {
         // ── Event streaming ──────────────────────────────────────────────────
 
         // Track tool call IDs so ToolResult can reference its ToolUse.
-        // tool_name → FIFO queue of pending toolCallIds.
+        // tool_name → FIFO queue of toolCallIds.
         let mut pending_tool_calls: HashMap<String, VecDeque<String>> = HashMap::new();
         let mut tool_call_counter: u64 = 0;
         // Accumulate the full assistant response for history storage.
@@ -423,7 +374,10 @@ impl Bridge {
                 AgentEvent::ToolUse { tool_name, input: _, .. } => {
                     tool_call_counter += 1;
                     let tc_id = format!("tc-{tool_call_counter}");
-                    pending_tool_calls.entry(tool_name.clone()).or_default().push_back(tc_id.clone());
+                    pending_tool_calls
+                        .entry(tool_name.clone())
+                        .or_default()
+                        .push_back(tc_id.clone());
 
                     self.notify("session/update", json!({
                         "sessionId": session_id,
@@ -454,7 +408,24 @@ impl Bridge {
                     }));
                 }
 
-                AgentEvent::HITLRequest { session_id: al_sid, request_id, tool_name, details, options } => {
+                AgentEvent::HITLAutoApproved { tool_name, risk_level, command, .. } => {
+                    tracing::info!("HITL auto-approved [risk: {risk_level}] '{tool_name}': {command}");
+                    // Inform Zed via a tool_call update so it's visible in the UI.
+                    tool_call_counter += 1;
+                    let tc_id = format!("tc-auto-{tool_call_counter}");
+                    self.notify("session/update", json!({
+                        "sessionId": session_id,
+                        "update": {
+                            "sessionUpdate": "tool_call",
+                            "toolCallId": tc_id,
+                            "title": format!("Auto-approved [{risk_level}]: {tool_name}"),
+                            "kind": tool_name_to_kind(&tool_name),
+                            "status": "completed"
+                        }
+                    }));
+                }
+
+                AgentEvent::HITLRequest { session_id: al_sid, request_id, tool_name, details, options, .. } => {
                     tool_call_counter += 1;
                     let tc_id = format!("tc-hitl-{tool_call_counter}");
 
@@ -629,9 +600,17 @@ fn hitl_decision_from_response(response: &Value, options: &[String]) -> HITLDeci
 
 #[tokio::main]
 async fn main() {
+    // Log to /tmp/agentloop-acp-bridge.log at DEBUG level so runtime errors are
+    // visible without cluttering the ACP stdout channel.
+    let file_appender = tracing_appender::rolling::never("/tmp", "agentloop-acp-bridge.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
     tracing_subscriber::fmt()
-        .with_env_filter("agentloop=info,agentloop_bridge=info")
-        .with_writer(std::io::stderr)
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .with_env_filter(
+            std::env::var("AGENTLOOP_LOG").unwrap_or_else(|_| "debug".to_string()),
+        )
         .init();
 
     let args = Args::parse();
@@ -650,15 +629,10 @@ async fn main() {
         };
     }
 
-    let path_map = args.path_map.as_deref().and_then(PathMap::parse);
-    if let Some(ref pm) = path_map {
-        tracing::info!("Path mapping: {} → {}", pm.local_prefix, pm.remote_prefix);
-    }
-
     // All output goes through a single unbounded channel → one writer task.
     let (output_tx, mut output_rx) = mpsc::unbounded_channel::<String>();
 
-    let bridge = Arc::new(Bridge::new(output_tx, config, path_map));
+    let bridge = Arc::new(Bridge::new(output_tx, config));
 
     // Spawn the output writer task.
     tokio::spawn(async move {
@@ -736,9 +710,12 @@ async fn main() {
                             b.handle_session_prompt(id, params).await;
                         });
                     }
-                    // Auth is handled server-side via OAuth; immediately succeed.
-                    "auth/getStatus" | "auth/signIn" | "authenticate" => {
-                        b.respond(AcpResponse::ok(id, Value::Null));
+                    // Auth is handled server-side; report already-authenticated.
+                    "auth/getStatus" => {
+                        b.respond(AcpResponse::ok(id, json!({ "authenticated": true })));
+                    }
+                    "auth/signIn" | "authenticate" => {
+                        b.respond(AcpResponse::ok(id, json!({ "authenticated": true })));
                     }
                     other => {
                         b.respond(AcpResponse::err(id, -32601, format!("method not found: {other}")));

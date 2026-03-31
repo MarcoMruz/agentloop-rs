@@ -272,8 +272,18 @@ fn handle_event(notification: &JsonRpcNotification) -> Result<()> {
                 notification.params.get("toolName").and_then(|v| v.as_str()),
                 notification.params.get("details").and_then(|v| v.as_str())
             ) {
-                println!("🤔 HITL Request for tool {}: {}", tool_name, details);
+                let risk = notification.params.get("riskLevel").and_then(|v| v.as_str()).unwrap_or("unknown");
+                println!("🤔 HITL Request [risk: {}] for tool {}: {}", risk, tool_name, details);
                 println!("   (This would normally prompt for approval)");
+            }
+        }
+        "event.hitl_auto_approved" => {
+            if let (Some(tool_name), Some(risk_level), Some(command)) = (
+                notification.params.get("toolName").and_then(|v| v.as_str()),
+                notification.params.get("riskLevel").and_then(|v| v.as_str()),
+                notification.params.get("command").and_then(|v| v.as_str()),
+            ) {
+                println!("✅ Auto-approved [risk: {}] {}: {}", risk_level, tool_name, command);
             }
         }
         "event.done" => {
