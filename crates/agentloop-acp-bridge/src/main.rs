@@ -347,8 +347,8 @@ impl Bridge {
         // ── Event streaming ──────────────────────────────────────────────────
 
         // Track tool call IDs so ToolResult can reference its ToolUse.
-        // tool_name → FIFO queue of toolCallIds.
-        let mut pending_tool_calls: HashMap<String, VecDeque<String>> = HashMap::new();
+        // tool_name → FIFO queue of (toolCallId, extra_content_for_result).
+        let mut pending_tool_calls: HashMap<String, VecDeque<(String, Option<String>)>> = HashMap::new();
         let mut tool_call_counter: u64 = 0;
         // Accumulate the full assistant response for history storage.
         let mut assistant_response = String::new();
@@ -371,20 +371,26 @@ impl Bridge {
                     }));
                 }
 
-                AgentEvent::ToolUse { tool_name, input: _, .. } => {
+                AgentEvent::ToolUse { tool_name, input, .. } => {
                     tool_call_counter += 1;
                     let tc_id = format!("tc-{tool_call_counter}");
+
+                    // Build a richer title and, for edit/write, pre-compute a diff
+                    // that will be shown alongside the result.
+                    let title = tool_rich_title(&tool_name, &input);
+                    let extra_content = tool_extra_content(&tool_name, &input);
+
                     pending_tool_calls
                         .entry(tool_name.clone())
                         .or_default()
-                        .push_back(tc_id.clone());
+                        .push_back((tc_id.clone(), extra_content));
 
                     self.notify("session/update", json!({
                         "sessionId": session_id,
                         "update": {
                             "sessionUpdate": "tool_call",
                             "toolCallId": tc_id,
-                            "title": tool_name,
+                            "title": title,
                             "kind": tool_name_to_kind(&tool_name),
                             "status": "pending"
                         }
@@ -392,10 +398,13 @@ impl Bridge {
                 }
 
                 AgentEvent::ToolResult { tool_name, output, success, .. } => {
-                    let tc_id = pending_tool_calls
+                    let (tc_id, extra_content) = pending_tool_calls
                         .get_mut(&tool_name)
                         .and_then(|q| q.pop_front())
-                        .unwrap_or_else(|| format!("tc-unknown-{tool_name}"));
+                        .unwrap_or_else(|| (format!("tc-unknown-{tool_name}"), None));
+
+                    // Prefer pre-computed diff/context over raw output when available.
+                    let display = extra_content.as_deref().unwrap_or(&output);
 
                     self.notify("session/update", json!({
                         "sessionId": session_id,
@@ -403,7 +412,7 @@ impl Bridge {
                             "sessionUpdate": "tool_call_update",
                             "toolCallId": tc_id,
                             "status": if success { "completed" } else { "failed" },
-                            "content": [{ "type": "content", "content": { "type": "text", "text": output } }]
+                            "content": [{ "type": "content", "content": { "type": "text", "text": display } }]
                         }
                     }));
                 }
@@ -491,6 +500,92 @@ impl Bridge {
 
         self.respond(AcpResponse::ok(id, json!({ "stopReason": "end_turn" })));
     }
+}
+
+// ── Tool display helpers ──────────────────────────────────────────────────────
+
+/// Build a human-readable title for a tool call.
+///
+/// - `bash` → `bash: <full command>`
+/// - `edit` → `edit: <path>`
+/// - `write` → `write: <path>`
+/// - `read`  → `read: <path>`
+/// - anything else → bare tool name
+fn tool_rich_title(tool_name: &str, input: &serde_json::Value) -> String {
+    let n = tool_name.to_lowercase();
+
+    if n == "bash" || n.contains("bash") || n.contains("exec") || n.contains("shell") {
+        if let Some(cmd) = input["command"].as_str() {
+            return format!("{tool_name}: {cmd}");
+        }
+    }
+
+    if let Some(path) = input["path"].as_str() {
+        return format!("{tool_name}: {path}");
+    }
+
+    tool_name.to_string()
+}
+
+/// Pre-compute extra display content for certain tool types.
+///
+/// - `edit`  → unified diff of old_text → new_text
+/// - `write` → short header + file content (max 200 lines)
+/// - everything else → `None` (raw output is used instead)
+fn tool_extra_content(tool_name: &str, input: &serde_json::Value) -> Option<String> {
+    let n = tool_name.to_lowercase();
+
+    if n == "edit" || n.contains("edit") {
+        let path = input["path"].as_str().unwrap_or("file");
+        let old = input["oldText"].as_str().or_else(|| input["old_text"].as_str())?;
+        let new = input["newText"].as_str().or_else(|| input["new_text"].as_str())?;
+        return Some(unified_diff(path, old, new));
+    }
+
+    if n == "write" || n.contains("write") {
+        let path = input["path"].as_str().unwrap_or("file");
+        let content = input["content"].as_str()?;
+        let lines: Vec<&str> = content.lines().collect();
+        let preview = if lines.len() > 200 {
+            format!("{}\n... ({} more lines)", lines[..200].join("\n"), lines.len() - 200)
+        } else {
+            content.to_string()
+        };
+        return Some(format!("// {path}\n{preview}"));
+    }
+
+    None
+}
+
+/// Generate a compact unified diff between `old` and `new` for `path`.
+fn unified_diff(path: &str, old: &str, new: &str) -> String {
+    use similar::{ChangeTag, TextDiff};
+
+    let diff = TextDiff::from_lines(old, new);
+    let mut out = format!("--- {path}\n+++ {path}\n");
+
+    for group in diff.grouped_ops(3) {
+        for op in &group {
+            for change in diff.iter_changes(op) {
+                let prefix = match change.tag() {
+                    ChangeTag::Delete => "-",
+                    ChangeTag::Insert => "+",
+                    ChangeTag::Equal  => " ",
+                };
+                out.push_str(prefix);
+                out.push_str(change.value());
+                if !change.value().ends_with('\n') {
+                    out.push('\n');
+                }
+            }
+        }
+    }
+
+    if out == format!("--- {path}\n+++ {path}\n") {
+        out.push_str("(no changes)\n");
+    }
+
+    out
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
