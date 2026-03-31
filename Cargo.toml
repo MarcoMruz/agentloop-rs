@@ -1,24 +1,6 @@
 [workspace]
 members = ["crates/*"]
 
-[package]
-name = "agentloop-rs"
-version = "0.1.0"
-edition = "2021"
-description = "Rust bridge and Zed ACP integration for AgentLoop coding agent"
-repository = "https://github.com/MarcoMruz/agentloop-rs"
-license = "MIT OR Apache-2.0"
-keywords = ["agentloop", "zed", "acp", "coding-agent", "bridge"]
-categories = ["development-tools", "api-bindings"]
-
-[dependencies]
-agentloop-bridge = { path = "crates/agentloop-bridge" }
-anyhow = "1.0.102"
-
-[features]
-default = []
-zed-acp = ["agentloop-bridge/zed-acp"]
-
 # Development profile
 [profile.dev]
 debug = true
@@ -31,22 +13,3 @@ opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
-
-# Development dependencies for workspace-level examples
-[dev-dependencies]
-tokio = { version = "1.40", features = ["full"] }
-tokio-test = "0.4"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-[[example]]
-name = "basic_usage"
-path = "examples/basic_usage.rs"
-
-[[example]]
-name = "event_handling"
-path = "examples/event_handling.rs"
-
-[[example]]
-name = "zed_integration"
-path = "examples/zed_integration.rs"
-required-features = ["zed-acp"]
