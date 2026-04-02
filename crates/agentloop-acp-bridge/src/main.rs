@@ -111,10 +111,18 @@ impl AcpResponse {
 // ── Session state ─────────────────────────────────────────────────────────────
 
 /// A single turn in the conversation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Message {
-    role: &'static str,
+    role: String,
     content: String,
+}
+
+/// On-disk format for a persisted ACP session.
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedSession {
+    session_id: String,
+    cwd: String,
+    history: Vec<Message>,
 }
 
 struct SessionState {
@@ -248,11 +256,31 @@ impl Bridge {
         let cwd = params["cwd"].as_str().unwrap_or("/tmp").to_string();
 
         let mut sessions = self.sessions.lock().await;
-        sessions.entry(session_id).or_insert(SessionState {
+        let entry = sessions.entry(session_id.clone()).or_insert(SessionState {
             cwd,
             agentloop_session_id: None,
             history: Vec::new(),
         });
+
+        // Restore persisted history if the session was not already loaded in-memory.
+        if entry.history.is_empty() {
+            let history_path = history_file_path(&session_id);
+            if history_path.exists() {
+                match std::fs::read_to_string(&history_path) {
+                    Ok(json) => match serde_json::from_str::<PersistedSession>(&json) {
+                        Ok(persisted) => {
+                            entry.history = persisted.history;
+                            if !persisted.cwd.is_empty() {
+                                entry.cwd = persisted.cwd;
+                            }
+                            tracing::info!("Restored {} history messages for session {session_id}", entry.history.len());
+                        }
+                        Err(e) => tracing::warn!("Failed to deserialize history for {session_id}: {e}"),
+                    },
+                    Err(e) => tracing::warn!("Failed to read history file for {session_id}: {e}"),
+                }
+            }
+        }
         drop(sessions);
 
         self.respond(AcpResponse::ok(id, Value::Null));
@@ -298,21 +326,28 @@ impl Bridge {
             return;
         }
 
-        let (cwd, full_prompt) = {
+        let (cwd, full_prompt, save_data) = {
             let mut sessions = self.sessions.lock().await;
             let state = sessions.get_mut(&session_id);
             match state {
-                None => ("/tmp".to_string(), text.clone()),
+                None => ("/tmp".to_string(), text.clone(), None),
                 Some(s) => {
                     let cwd = s.cwd.clone();
                     // Append the new user message to history.
-                    s.history.push(Message { role: "user", content: text.clone() });
+                    s.history.push(Message { role: "user".to_string(), content: text.clone() });
                     // Build a full conversation prompt from history.
                     let full = build_conversation_prompt(&s.history);
-                    (cwd, full)
+                    let snapshot = Some((cwd.clone(), s.history.clone()));
+                    (cwd, full, snapshot)
                 }
             }
         };
+        // Persist after user message to avoid data loss on crash.
+        if let Some((ref save_cwd, ref save_history)) = save_data {
+            if let Err(e) = save_session_history(&session_id, save_cwd, save_history) {
+                tracing::warn!("Failed to persist session history after user message: {e}");
+            }
+        }
 
         let user_id = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
 
@@ -477,7 +512,7 @@ impl Bridge {
                     {
                         let mut sessions = self.sessions.lock().await;
                         if let Some(state) = sessions.get_mut(&session_id) {
-                            if state.history.last().map(|m| m.role) == Some("user") {
+                            if state.history.last().map(|m| m.role.as_str()) == Some("user") {
                                 state.history.pop();
                             }
                         }
@@ -491,10 +526,21 @@ impl Bridge {
         }
 
         // Store the assistant response in history for future turns.
-        if !assistant_response.is_empty() {
+        let post_turn_save = if !assistant_response.is_empty() {
             let mut sessions = self.sessions.lock().await;
             if let Some(state) = sessions.get_mut(&session_id) {
-                state.history.push(Message { role: "assistant", content: assistant_response });
+                state.history.push(Message { role: "assistant".to_string(), content: assistant_response });
+                Some((state.cwd.clone(), state.history.clone()))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        // Persist after assistant turn completes.
+        if let Some((ref save_cwd, ref save_history)) = post_turn_save {
+            if let Err(e) = save_session_history(&session_id, save_cwd, save_history) {
+                tracing::warn!("Failed to persist session history after assistant response: {e}");
             }
         }
 
@@ -590,6 +636,33 @@ fn unified_diff(path: &str, old: &str, new: &str) -> String {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Return the path to the on-disk history file for `session_id`.
+fn history_file_path(session_id: &str) -> std::path::PathBuf {
+    let base = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+        .join(".local/share/agentloop/acp-sessions");
+    base.join(format!("{session_id}.json"))
+}
+
+/// Atomically persist session history to disk (write to .tmp then rename).
+fn save_session_history(session_id: &str, cwd: &str, history: &[Message]) -> std::io::Result<()> {
+    let path = history_file_path(session_id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let persisted = PersistedSession {
+        session_id: session_id.to_string(),
+        cwd: cwd.to_string(),
+        history: history.to_vec(),
+    };
+    let json = serde_json::to_string(&persisted)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let tmp_path = path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, &json)?;
+    std::fs::rename(&tmp_path, &path)?;
+    Ok(())
+}
+
 /// Build a single prompt string from the conversation history.
 ///
 /// The format is readable plain text that the AgentLoop agent can parse:
@@ -612,8 +685,31 @@ fn build_conversation_prompt(history: &[Message]) -> String {
         return history.last().map(|m| m.content.clone()).unwrap_or_default();
     }
 
+    const MAX_CHARS: usize = 40_000;
+
+    // Determine the largest suffix of history that fits within MAX_CHARS,
+    // always keeping at least the last 2 turns.
+    let mut start = history.len();
+    let mut char_count: usize = 0;
+
+    for i in (0..history.len()).rev() {
+        let msg = &history[i];
+        let msg_chars = msg.role.len() + msg.content.len() + 6; // "[]: \n" overhead
+        if char_count + msg_chars > MAX_CHARS && history.len() - start >= 2 {
+            break;
+        }
+        char_count += msg_chars;
+        start = i;
+    }
+
+    let truncated = start > 0;
+    let history_to_use = &history[start..];
+
     let mut buf = String::from("<conversation_history>\n");
-    for msg in history {
+    if truncated {
+        buf.push_str("[Note: older conversation history has been truncated for context length]\n");
+    }
+    for msg in history_to_use {
         buf.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
     }
     buf.push_str("</conversation_history>\n\n");
